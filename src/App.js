@@ -82,7 +82,7 @@ function App() {
   /**
    * Display options - Control what's shown in the viewer
    */
-  const [showBackbone, setShowBackbone] = useState(true);
+  const [showBackbone, setShowBackbone] = useState(false);
   const [showAtoms, setShowAtoms] = useState(true);
   
   // ============================================
@@ -259,7 +259,11 @@ function App() {
               ProteinViewer - The 3D visualization
               Rendered when we have backbone atoms to display
             */
-            <ProteinViewer backboneAtoms={backboneAtoms} />
+            <ProteinViewer 
+              backboneAtoms={backboneAtoms}
+              showBackbone={showBackbone}
+              showAtoms={showAtoms}
+            />
           ) : (
             /* 
               Empty State - Shown before any file is loaded

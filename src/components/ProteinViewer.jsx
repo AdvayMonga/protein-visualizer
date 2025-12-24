@@ -54,7 +54,7 @@ import { createBackboneLine, createAtomSpheres, getMaxDimension } from '../utils
  * @param {Object} props - Component props
  * @param {Array} props.backboneAtoms - Array of centered backbone atoms
  */
-function Protein({ backboneAtoms }) {
+function Protein({ backboneAtoms, showBackbone, showAtoms }) {
   // useRef creates a reference that persists across renders
   // We'll attach it to the <group> element to access the Three.js Group object
   const groupRef = useRef();
@@ -82,18 +82,20 @@ function Protein({ backboneAtoms }) {
       if (child.material) child.material.dispose();
     }
     
-    // Create and add the backbone line
-    // This connects all CA atoms with a green line
-    const backboneLine = createBackboneLine(backboneAtoms);
-    groupRef.current.add(backboneLine);
+    // Create and add the backbone line only if showBackbone is true
+    if (showBackbone) {
+      const backboneLine = createBackboneLine(backboneAtoms);
+      groupRef.current.add(backboneLine);
+    }
     
-    // Create and add atom spheres
-    // Each CA atom gets a red sphere
-    const spheres = createAtomSpheres(backboneAtoms);
-    spheres.forEach(sphere => groupRef.current.add(sphere));
+    // Create and add atom spheres only if showAtoms is true
+    if (showAtoms) {
+      const spheres = createAtomSpheres(backboneAtoms);
+      spheres.forEach(sphere => groupRef.current.add(sphere));
+    }
     
     // Log success for debugging
-    console.log(`Rendered protein: ${backboneAtoms.length} residues, ${spheres.length + 1} objects`);
+    console.log(`Rendered protein: ${backboneAtoms.length} residues, showBackbone=${showBackbone}, showAtoms=${showAtoms}`);
     
     // Cleanup function runs when component unmounts or before re-running effect
     // This ensures we don't have memory leaks
@@ -106,7 +108,7 @@ function Protein({ backboneAtoms }) {
         });
       }
     };
-  }, [backboneAtoms]); // Dependency array - effect runs when backboneAtoms changes
+  }, [backboneAtoms, showBackbone, showAtoms]); // Dependency array - effect runs when these change
   
   // Render a Three.js group
   // <group> is R3F's wrapper for THREE.Group
@@ -130,7 +132,7 @@ function Protein({ backboneAtoms }) {
  * @param {Object} props - Component props
  * @param {Array} props.backboneAtoms - Array of centered backbone CA atoms
  */
-function ProteinViewer({ backboneAtoms }) {
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true }) {
   // Calculate appropriate camera distance based on protein size
   // This ensures the protein fits nicely in view regardless of size
   const cameraDistance = useMemo(() => {
@@ -210,7 +212,11 @@ function ProteinViewer({ backboneAtoms }) {
           Only render if we have atoms to show.
         */}
         {backboneAtoms && backboneAtoms.length > 0 && (
-          <Protein backboneAtoms={backboneAtoms} />
+          <Protein 
+            backboneAtoms={backboneAtoms}
+            showBackbone={showBackbone}
+            showAtoms={showAtoms}
+          />
         )}
         
         {/*
