@@ -91,13 +91,14 @@ export function createBackboneLine(backboneAtoms) {
  * - Combined with the backbone line, gives a "ball and stick" appearance
  * 
  * @param {Array<Object>} backboneAtoms - Array of CA atoms from getBackboneAtoms()
+ * @param {string} colorScheme - 'residue' or 'chain' to determine coloring
  * @returns {Array<THREE.Mesh>} - Array of sphere mesh objects
  * 
  * @example
- * const spheres = createAtomSpheres(backbone);
+ * const spheres = createAtomSpheres(backbone, 'residue');
  * spheres.forEach(sphere => scene.add(sphere));
  */
-export function createAtomSpheres(backboneAtoms) {
+export function createAtomSpheres(backboneAtoms, colorScheme = 'residue') {
   // Array to collect all the sphere meshes
   const spheres = [];
   
@@ -114,8 +115,12 @@ export function createAtomSpheres(backboneAtoms) {
     // MeshBasicMaterial is a simple material that doesn't respond to lights
     // Good for quick visualization, always appears the same brightness
     // For more realistic lighting, use MeshStandardMaterial instead
+    // Color based on selected scheme: residue type or chain
+    const color = colorScheme === 'chain' 
+      ? getChainColor(atom.chain) 
+      : getResidueColor(atom.residue);
     const material = new THREE.MeshBasicMaterial({ 
-      color: 0xff6b6b  // Coral red - contrasts nicely with green backbone
+      color: color 
     });
     
     // Create the mesh by combining geometry and material
@@ -274,6 +279,24 @@ export const aminoAcidColors = {
 };
 
 /**
+ * Color scheme for protein chains.
+ * Each chain (A, B, C, etc.) gets a distinct color.
+ */
+export const chainColors = {
+  'A': 0x3498db, // Blue
+  'B': 0xe74c3c, // Red
+  'C': 0x2ecc71, // Green
+  'D': 0xf39c12, // Orange
+  'E': 0x9b59b6, // Purple
+  'F': 0x1abc9c, // Teal
+  'G': 0xe91e63, // Pink
+  'H': 0x00bcd4, // Cyan
+  'I': 0xff5722, // Deep Orange
+  'J': 0x795548, // Brown
+  'default': 0x95a5a6 // Gray
+};
+
+/**
  * Gets the color for a specific amino acid residue.
  * 
  * @param {string} residueName - Three-letter residue code (e.g., 'ALA')
@@ -281,4 +304,14 @@ export const aminoAcidColors = {
  */
 export function getResidueColor(residueName) {
   return aminoAcidColors[residueName] || aminoAcidColors['default'];
+}
+
+/**
+ * Gets the color for a specific chain.
+ * 
+ * @param {string} chain - Single-letter chain identifier (e.g., 'A')
+ * @returns {number} - Hex color value for Three.js materials
+ */
+export function getChainColor(chain) {
+  return chainColors[chain] || chainColors['default'];
 }

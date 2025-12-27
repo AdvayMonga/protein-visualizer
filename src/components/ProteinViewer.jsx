@@ -54,7 +54,7 @@ import { createBackboneLine, createAtomSpheres, getMaxDimension } from '../utils
  * @param {Object} props - Component props
  * @param {Array} props.backboneAtoms - Array of centered backbone atoms
  */
-function Protein({ backboneAtoms, showBackbone, showAtoms }) {
+function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
   // useRef creates a reference that persists across renders
   // We'll attach it to the <group> element to access the Three.js Group object
   const groupRef = useRef();
@@ -90,12 +90,12 @@ function Protein({ backboneAtoms, showBackbone, showAtoms }) {
     
     // Create and add atom spheres only if showAtoms is true
     if (showAtoms) {
-      const spheres = createAtomSpheres(backboneAtoms);
+      const spheres = createAtomSpheres(backboneAtoms, colorScheme);
       spheres.forEach(sphere => groupRef.current.add(sphere));
     }
     
     // Log success for debugging
-    console.log(`Rendered protein: ${backboneAtoms.length} residues, showBackbone=${showBackbone}, showAtoms=${showAtoms}`);
+    console.log(`Rendered protein: ${backboneAtoms.length} residues, showBackbone=${showBackbone}, showAtoms=${showAtoms}, colorScheme=${colorScheme}`);
     
     // Cleanup function runs when component unmounts or before re-running effect
     // This ensures we don't have memory leaks
@@ -108,7 +108,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms }) {
         });
       }
     };
-  }, [backboneAtoms, showBackbone, showAtoms]); // Dependency array - effect runs when these change
+  }, [backboneAtoms, showBackbone, showAtoms, colorScheme]); // Dependency array - effect runs when these change
   
   // Render a Three.js group
   // <group> is R3F's wrapper for THREE.Group
@@ -132,7 +132,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms }) {
  * @param {Object} props - Component props
  * @param {Array} props.backboneAtoms - Array of centered backbone CA atoms
  */
-function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true }) {
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, colorScheme = 'residue' }) {
   // Calculate appropriate camera distance based on protein size
   // This ensures the protein fits nicely in view regardless of size
   const cameraDistance = useMemo(() => {
@@ -216,6 +216,7 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true })
             backboneAtoms={backboneAtoms}
             showBackbone={showBackbone}
             showAtoms={showAtoms}
+            colorScheme={colorScheme}
           />
         )}
         

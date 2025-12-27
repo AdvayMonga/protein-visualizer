@@ -82,8 +82,9 @@ function App() {
   /**
    * Display options - Control what's shown in the viewer
    */
-  const [showBackbone, setShowBackbone] = useState(false);
+  const [showBackbone, setShowBackbone] = useState(true);
   const [showAtoms, setShowAtoms] = useState(true);
+  const [colorScheme, setColorScheme] = useState('residue');
   
   // ============================================
   // EVENT HANDLERS
@@ -245,6 +246,8 @@ function App() {
               onShowBackboneChange={setShowBackbone}
               showAtoms={showAtoms}
               onShowAtomsChange={setShowAtoms}
+              colorScheme={colorScheme}
+              onColorSchemeChange={setColorScheme}
             />
           )}
         </aside>
@@ -263,6 +266,7 @@ function App() {
               backboneAtoms={backboneAtoms}
               showBackbone={showBackbone}
               showAtoms={showAtoms}
+              colorScheme={colorScheme}
             />
           ) : (
             /* 

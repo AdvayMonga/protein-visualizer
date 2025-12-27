@@ -26,13 +26,17 @@ import React from 'react';
  * @param {Function} props.onShowBackboneChange - Callback when backbone toggle changes
  * @param {boolean} props.showAtoms - Whether to show atom spheres
  * @param {Function} props.onShowAtomsChange - Callback when atoms toggle changes
+ * @param {string} props.colorScheme - Current color scheme ('residue' or 'chain')
+ * @param {Function} props.onColorSchemeChange - Callback when color scheme changes
  */
 function Controls({ 
   proteinInfo, 
   showBackbone = true, 
   onShowBackboneChange,
   showAtoms = true,
-  onShowAtomsChange 
+  onShowAtomsChange,
+  colorScheme = 'residue',
+  onColorSchemeChange
 }) {
   // Styles for the control panel
   const panelStyle = {
@@ -81,6 +85,23 @@ function Controls({
     color: '#333',
     cursor: 'pointer',
   };
+
+  const selectStyle = {
+    width: '100%',
+    padding: '8px',
+    fontSize: '14px',
+    borderRadius: '4px',
+    border: '1px solid #dee2e6',
+    backgroundColor: 'white',
+    cursor: 'pointer',
+  };
+
+  const selectLabelStyle = {
+    fontSize: '14px',
+    color: '#333',
+    marginBottom: '5px',
+    display: 'block',
+  };
   
   return (
     <div style={panelStyle}>
@@ -126,7 +147,25 @@ function Controls({
         />
         <span style={checkboxLabelStyle}>Show Atom Spheres</span>
       </label>
-      
+
+      {/* Color scheme selector */}
+      <div style={{ marginTop: '15px' }}>
+        <label style={selectLabelStyle}>Color Scheme:</label>
+        <select 
+          style={selectStyle}
+          value={colorScheme}
+          onChange={(e) => onColorSchemeChange && onColorSchemeChange(e.target.value)}
+        >
+          <option value="residue">By Residue Type</option>
+          <option value="chain">By Chain</option>
+        </select>
+        <p style={{ fontSize: '11px', color: '#888', marginTop: '5px' }}>
+          {colorScheme === 'residue' 
+            ? '🟠 Hydrophobic  🟢 Polar  🔵 Positive  🔴 Negative'
+            : 'Each chain gets a unique color'}
+        </p>
+      </div>
+
       {/* Instructions */}
       <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#e9ecef', borderRadius: '4px' }}>
         <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
