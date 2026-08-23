@@ -15,7 +15,7 @@
  * - <Canvas>: The 3D viewport, creates a WebGL context
  * - <mesh>: A 3D object with geometry and material
  * - <ambientLight>: Light that illuminates all objects equally
- * - <pointLight>: Light that radiates from a point in all directions
+ * - <directionalLight>: Parallel light from a direction, like the sun
  * 
  * @react-three/drei:
  * - Helper components built on top of R3F
@@ -185,6 +185,17 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, c
         <color attach="background" args={['#1a1a2e']} />
         
         {/*
+          Depth Fog
+          ---------
+          Fades geometry into the background as it gets farther from the camera.
+          Large proteins stack many layers of chain on top of each other; without
+          a depth cue the back of the structure is exactly as bright as the front
+          and the whole thing reads as flat noise. Range is derived from camera
+          distance so it scales with the protein.
+        */}
+        <fog attach="fog" args={['#1a1a2e', cameraDistance * 0.7, cameraDistance * 1.4]} />
+        
+        {/*
           Lighting
           --------
           Without lights, 3D objects would appear black (except for materials
@@ -195,15 +206,16 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, c
           - No shadows, no direction
           - intensity: How bright (0 = off, 1 = full)
           
-          pointLight:
-          - Radiates light from a single point in all directions
-          - Like a light bulb
-          - position: Where the light is located
-          - Creates highlights on curved surfaces
+          directionalLight:
+          - Parallel rays from a direction, like sunlight
+          - position only sets the direction it shines from, not a location
+          - Used instead of pointLight because point lights fall off with
+            distance squared, and the protein can be 100+ units across
+          - Creates the bright/shaded gradient that makes spheres look round
         */}
-        <ambientLight intensity={0.5} />
-        <pointLight position={[10, 10, 10]} intensity={1} />
-        <pointLight position={[-10, -10, -10]} intensity={0.5} />
+        <ambientLight intensity={0.55} />
+        <directionalLight position={[5, 8, 10]} intensity={2} />
+        <directionalLight position={[-6, -4, -8]} intensity={0.7} />
         
         {/*
           The Protein

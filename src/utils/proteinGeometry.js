@@ -42,15 +42,15 @@ import * as THREE from 'three';
  * The backbone line is the simplest visualization of a protein:
  * - Connects each CA atom to the next CA atom
  * - Shows how the protein chain winds through 3D space
- * - Similar to a "tube" representation but just as a line
+ * - Rendered as a thin lit tube so it has depth, not a flat 1px line
  * 
  * @param {Array<Object>} backboneAtoms - Array of CA atoms from getBackboneAtoms()
- * @returns {THREE.Line} - A Three.js Line object ready to be added to the scene
+ * @returns {THREE.Mesh} - A thin tube mesh ready to be added to the scene
  * 
  * @example
  * const backbone = getBackboneAtoms(atoms);
- * const line = createBackboneLine(backbone);
- * scene.add(line);  // Add to Three.js scene
+ * const tube = createBackboneLine(backbone);
+ * scene.add(tube);  // Add to Three.js scene
  */
 export function createBackboneLine(backboneAtoms) {
   // Convert each atom's coordinates into a THREE.Vector3 point
@@ -59,25 +59,31 @@ export function createBackboneLine(backboneAtoms) {
     new THREE.Vector3(atom.x, atom.y, atom.z)
   );
   
-  // Create geometry from the points array
-  // BufferGeometry is more efficient than the old Geometry class
-  // setFromPoints() creates a geometry where each point is a vertex
-  // When used with a Line, vertices are connected in order
-  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  // A tube needs at least two points to be swept along
+  if (points.length < 2) return new THREE.Group();
   
-  // Create a material for the line
-  // LineBasicMaterial is the simplest line material
-  // Properties:
-  // - color: Hex color value (0x00ff00 = bright green)
-  // - linewidth: Note - linewidth > 1 only works on some systems (not WebGL)
-  const material = new THREE.LineBasicMaterial({ 
-    color: 0x00ff00,  // Bright green - easy to see against dark background
-    linewidth: 2      // Note: May not work in WebGL (browser limitation)
+  // CatmullRomCurve3 fits a smooth curve through the CA positions,
+  // so the trace reads as a continuous ribbon rather than kinked segments
+  const curve = new THREE.CatmullRomCurve3(points);
+  
+  // TubeGeometry sweeps a circle along the curve
+  // Parameters: (curve, tubularSegments, radius, radialSegments, closed)
+  // - tubularSegments: 4 per residue keeps the curve smooth without exploding vertex count
+  // - radius: 0.10 A - deliberately thinner than the 0.5 A spheres so the
+  //   trace never occludes the residue colors sitting on top of it
+  const geometry = new THREE.TubeGeometry(curve, points.length * 4, 0.10, 8, false);
+  
+  // MeshStandardMaterial responds to scene lighting, which is what gives
+  // the tube its rounded shading (LineBasicMaterial has no shading at all)
+  // Neutral slate rather than a saturated color: the trace only needs to show
+  // connectivity, so all the color budget goes to the residue/chain spheres
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x8a9bb0,
+    roughness: 0.6,
+    metalness: 0.0
   });
   
-  // Combine geometry and material into a Line object
-  // THREE.Line draws connected line segments through the vertices
-  return new THREE.Line(geometry, material);
+  return new THREE.Mesh(geometry, material);
 }
 
 /**
@@ -112,15 +118,17 @@ export function createAtomSpheres(backboneAtoms, colorScheme = 'residue') {
     // Lower values = faster rendering, higher values = smoother spheres
     const geometry = new THREE.SphereGeometry(0.5, 16, 16);
     
-    // MeshBasicMaterial is a simple material that doesn't respond to lights
-    // Good for quick visualization, always appears the same brightness
-    // For more realistic lighting, use MeshStandardMaterial instead
     // Color based on selected scheme: residue type or chain
     const color = colorScheme === 'chain' 
       ? getChainColor(atom.chain) 
       : getResidueColor(atom.residue);
-    const material = new THREE.MeshBasicMaterial({ 
-      color: color 
+    // MeshStandardMaterial responds to lights, so the sphere gets a bright
+    // side and a shaded side - that gradient is what makes it read as a ball
+    // instead of a flat circle. Low roughness adds a subtle specular highlight.
+    const material = new THREE.MeshStandardMaterial({
+      color: color,
+      roughness: 0.35,
+      metalness: 0.05
     });
     
     // Create the mesh by combining geometry and material
@@ -279,24 +287,6 @@ export const aminoAcidColors = {
 };
 
 /**
- * Color scheme for protein chains.
- * Each chain (A, B, C, etc.) gets a distinct color.
- */
-export const chainColors = {
-  'A': 0x3498db, // Blue
-  'B': 0xe74c3c, // Red
-  'C': 0x2ecc71, // Green
-  'D': 0xf39c12, // Orange
-  'E': 0x9b59b6, // Purple
-  'F': 0x1abc9c, // Teal
-  'G': 0xe91e63, // Pink
-  'H': 0x00bcd4, // Cyan
-  'I': 0xff5722, // Deep Orange
-  'J': 0x795548, // Brown
-  'default': 0x95a5a6 // Gray
-};
-
-/**
  * Gets the color for a specific amino acid residue.
  * 
  * @param {string} residueName - Three-letter residue code (e.g., 'ALA')
@@ -307,11 +297,48 @@ export function getResidueColor(residueName) {
 }
 
 /**
+ * Colors for protein chains.
+ * 
+ * Generated rather than hardcoded: large complexes can have dozens of chains
+ * (PDB IDs run A-Z, then a-z, then 0-9), and any fixed palette runs out.
+ * 
+ * Why not Math.random()? Two reasons:
+ * 1. Colors would change on every reload, so a chain you are tracking visually
+ *    becomes a different color each time the file is loaded.
+ * 2. Random hues clump - with 20 chains drawn uniformly you are very likely to
+ *    get several near-duplicate pairs, which is the exact problem to avoid.
+ * 
+ * Instead the hue is derived deterministically from the chain ID. Multiplying by
+ * the golden ratio and taking the fractional part is a low-discrepancy sequence:
+ * it looks scattered, but sequential IDs (K, L, M...) land far apart on the hue
+ * circle and the values stay evenly distributed at any number of chains.
+ */
+const HUE_STEP = 0.618033988749895;
+
+// Hue alone runs out at ~30 chains, where the closest pair sits under 5 degrees
+// apart. Cycling saturation and lightness on different periods (2 and 3) gives
+// six buckets, so two chains only share all three values if their hues are at
+// least 15 degrees apart. Both ranges stay high so every chain reads as a
+// vivid color against the dark background.
+const SATURATIONS = [0.85, 0.62];
+const LIGHTNESSES = [0.72, 0.62, 0.52];
+
+/**
  * Gets the color for a specific chain.
  * 
  * @param {string} chain - Single-letter chain identifier (e.g., 'A')
  * @returns {number} - Hex color value for Three.js materials
  */
 export function getChainColor(chain) {
-  return chainColors[chain] || chainColors['default'];
+  // Some PDB files leave the chain column blank - nothing to derive a hue from
+  if (!chain) return 0x95a5a6;
+  
+  const code = chain.charCodeAt(0);
+  return new THREE.Color()
+    .setHSL(
+      (code * HUE_STEP) % 1,
+      SATURATIONS[code % SATURATIONS.length],
+      LIGHTNESSES[code % LIGHTNESSES.length]
+    )
+    .getHex();
 }
