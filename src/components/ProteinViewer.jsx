@@ -34,10 +34,10 @@
  */
 
 import React, { useEffect, useRef, useMemo } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { createBackboneLine, createAtomSpheres, getMaxDimension } from '../utils/proteinGeometry';
+import { createBackboneLine, createAtomSpheres, getMaxDimension, getBoundingRadius } from '../utils/proteinGeometry';
 
 /**
  * Protein Component (Internal)
@@ -118,6 +118,40 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
 }
 
 /**
+ * Depth Fog (Internal)
+ * --------------------
+ * Keeps the fog range pinned to where the protein actually is, every frame.
+ *
+ * A fixed range cannot work here: OrbitControls lets the camera travel between 5
+ * and 500 units, and because the fog color matches the background, anything past
+ * the far bound is not merely hazy, it is invisible. Recomputing from the live
+ * camera distance means the cue stays a cue at any zoom level.
+ *
+ * The bounds are deliberately lopsided. Near sits at the front of the protein so
+ * the closest atoms are never touched; far sits three radii out, well behind the
+ * back, so the far side lands mid-curve rather than at full fog. Three.js applies
+ * smoothstep across the range, so the back of the structure reaches about 50%
+ * background - enough to read as depth, not enough to erase anything.
+ *
+ * @param {Object} props
+ * @param {number} props.radius - Bounding radius of the protein, centered at origin
+ */
+function DepthFog({ radius }) {
+  const { scene, camera } = useThree();
+
+  useFrame(() => {
+    if (!scene.fog) return;
+    // The protein is centered at the origin, so camera distance to the origin is
+    // the distance to its center.
+    const distance = camera.position.length();
+    scene.fog.near = Math.max(0.1, distance - radius);
+    scene.fog.far = distance + radius * 3;
+  });
+
+  return <fog attach="fog" args={['#1a1a2e', 1, 1000]} />;
+}
+
+/**
  * ProteinViewer Component (Main Export)
  * -------------------------------------
  * The main component that sets up the 3D canvas and controls.
@@ -142,6 +176,12 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, c
     // Camera should be about 2x the protein size for a good view
     // Minimum of 30 to ensure we're not too close
     return Math.max(30, maxDim * 2);
+  }, [backboneAtoms]);
+  
+  // Half-extent of the protein, used to size the fog range around it
+  const boundingRadius = useMemo(() => {
+    if (!backboneAtoms || backboneAtoms.length === 0) return 25;
+    return getBoundingRadius(backboneAtoms);
   }, [backboneAtoms]);
   
   // Container styles
@@ -187,13 +227,11 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, c
         {/*
           Depth Fog
           ---------
-          Fades geometry into the background as it gets farther from the camera.
-          Large proteins stack many layers of chain on top of each other; without
-          a depth cue the back of the structure is exactly as bright as the front
-          and the whole thing reads as flat noise. Range is derived from camera
-          distance so it scales with the protein.
+          Fades geometry into the background as it gets farther from the camera,
+          so large proteins read with depth instead of flattening into overlapping
+          layers. Range tracks the live camera position - see DepthFog.
         */}
-        <fog attach="fog" args={['#1a1a2e', cameraDistance * 0.7, cameraDistance * 1.4]} />
+        <DepthFog radius={boundingRadius} />
         
         {/*
           Lighting

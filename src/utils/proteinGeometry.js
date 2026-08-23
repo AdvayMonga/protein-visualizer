@@ -69,9 +69,10 @@ export function createBackboneLine(backboneAtoms) {
   // TubeGeometry sweeps a circle along the curve
   // Parameters: (curve, tubularSegments, radius, radialSegments, closed)
   // - tubularSegments: 4 per residue keeps the curve smooth without exploding vertex count
-  // - radius: 0.10 A - deliberately thinner than the 0.5 A spheres so the
-  //   trace never occludes the residue colors sitting on top of it
-  const geometry = new THREE.TubeGeometry(curve, points.length * 4, 0.10, 8, false);
+  // - radius: a fraction of the residue radius, so the trace stays thinner than
+  //   the spheres it threads through but never drops below a pixel on screen
+  const radius = getResidueRadius(backboneAtoms) * BACKBONE_RADIUS_RATIO;
+  const geometry = new THREE.TubeGeometry(curve, points.length * 4, radius, 8, false);
   
   // MeshStandardMaterial responds to scene lighting, which is what gives
   // the tube its rounded shading (LineBasicMaterial has no shading at all)
@@ -108,15 +109,18 @@ export function createAtomSpheres(backboneAtoms, colorScheme = 'residue') {
   // Array to collect all the sphere meshes
   const spheres = [];
   
+  // One radius for the whole structure, computed once rather than per atom
+  const radius = getResidueRadius(backboneAtoms);
+  
   // Create a sphere for each backbone atom
   backboneAtoms.forEach(atom => {
     // SphereGeometry creates a sphere shape
     // Parameters: (radius, widthSegments, heightSegments)
-    // - radius: 0.5 Angstroms - reasonable size for visualization
+    // - radius: scaled to the protein so residues stay the same apparent size
     // - widthSegments: 16 - how many horizontal divisions (more = smoother)
     // - heightSegments: 16 - how many vertical divisions (more = smoother)
     // Lower values = faster rendering, higher values = smoother spheres
-    const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+    const geometry = new THREE.SphereGeometry(radius, 16, 16);
     
     // Color based on selected scheme: residue type or chain
     const color = colorScheme === 'chain' 
@@ -252,6 +256,48 @@ export function getMaxDimension(atoms) {
   const bbox = getBoundingBox(atoms);
   return Math.max(bbox.size.x, bbox.size.y, bbox.size.z);
 }
+
+/**
+ * Distance from the origin to the furthest atom.
+ *
+ * Assumes the atoms have been through centerProtein(), so the origin is the
+ * centroid. Unlike getMaxDimension this is rotation-independent, which is what
+ * the fog needs - the protein presents a different depth to the camera at every
+ * orientation, and the fog range has to cover the worst case.
+ *
+ * @param {Array<Object>} atoms - Centered atoms
+ * @returns {number} - Bounding radius
+ */
+export function getBoundingRadius(atoms) {
+  if (atoms.length === 0) return 0;
+
+  return atoms.reduce(
+    (max, a) => Math.max(max, Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)),
+    0
+  );
+}
+
+/**
+ * Radius to draw each residue sphere at.
+ *
+ * Camera distance scales with the protein (see ProteinViewer), so a fixed radius
+ * shrinks on screen as structures get bigger - at 200 A a 0.5 A sphere is under a
+ * pixel across and the whole protein dissolves into noise. Scaling the radius with
+ * the protein instead holds the apparent size roughly constant at any size.
+ *
+ * The floor keeps small proteins at the original 0.5 A, so anything that already
+ * looked right is untouched.
+ *
+ * @param {Array<Object>} atoms - Centered atoms
+ * @returns {number} - Sphere radius in Angstroms
+ */
+function getResidueRadius(atoms) {
+  return Math.max(0.5, getMaxDimension(atoms) * 0.016);
+}
+
+// The backbone trace is drawn at a fraction of the residue radius so it always
+// reads as a thread through the spheres rather than a tube swallowing them.
+const BACKBONE_RADIUS_RATIO = 0.3;
 
 /**
  * Color schemes for amino acids.
