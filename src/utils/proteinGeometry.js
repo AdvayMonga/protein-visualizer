@@ -6,49 +6,142 @@
  */
 
 import * as THREE from 'three';
+import { groupBySecondaryStructure, HELIX, SHEET, COIL } from './secondaryStructure';
+
+/**
+ * Tube radius per secondary structure element, as a fraction of the residue
+ * radius.
+ *
+ * Expressed as ratios rather than absolute Angstroms so they scale with the
+ * structure, for the same reason the sphere radius does: camera distance grows
+ * with the protein, so a fixed radius shrinks to nothing on large structures.
+ *
+ * Thickness alone separates the elements at a glance: fat cylinders read as
+ * helices, medium as strands, thin as the loops between them. This is a tube
+ * cartoon rather than a true ribbon one - drawing flat ribbons with the correct
+ * twist needs the backbone carbonyl oxygens to orient each residue, and a CA
+ * trace does not carry them. A ribbon oriented by curve geometry alone twists
+ * arbitrarily, which looks worse than an honest tube.
+ */
+export const SS_RADIUS_RATIOS = {
+  [HELIX]: 0.9,
+  [SHEET]: 0.7,
+  [COIL]: 0.24,
+};
+
+export const SS_COLORS = {
+  [HELIX]: 0xf05a5a,
+  [SHEET]: 0xf5d76e,
+  [COIL]: 0xb0b8c4,
+};
 
 /**
  * Builds a smooth tube through the backbone atoms, broken wherever the chain is not
- * actually continuous.
+ * actually continuous. With showSecondaryStructure it becomes a tube cartoon, varying
+ * thickness and colour by helix, strand and coil.
  *
  * @param {Array<Object>} backboneAtoms - CA atoms from getBackboneAtoms()
- * @returns {THREE.Group} Group of tube meshes, one per connected segment
+ * @param {Object} options - Rendering options
+ * @param {boolean} options.showSecondaryStructure - Draw as a cartoon
+ * @returns {THREE.Group} Group of tube meshes
  */
-export function createBackboneLine(backboneAtoms) {
-  // Neutral slate: the trace only needs to show connectivity, so the color budget
-  // goes to the residue/chain spheres. Shared by every segment, since a large
+export function createBackboneLine(backboneAtoms, options = {}) {
+  const { showSecondaryStructure = false } = options;
+
+  const group = new THREE.Group();
+
+  // Neutral slate: the plain trace only needs to show connectivity, so the color
+  // budget goes to the residue spheres. Shared by every segment, since a large
   // structure can break into hundreds of them.
-  const material = new THREE.MeshStandardMaterial({
+  const plainMaterial = new THREE.MeshStandardMaterial({
     color: 0x8a9bb0,
     roughness: 0.6,
     metalness: 0.0
   });
 
-  // Computed from the whole structure rather than per segment, so every segment is
-  // drawn at the same thickness.
-  const radius = getResidueRadius(backboneAtoms) * BACKBONE_RADIUS_RATIO;
-
-  const group = new THREE.Group();
+  // Computed once rather than per segment, so every segment is drawn at the same
+  // thickness.
+  const residueRadius = getResidueRadius(backboneAtoms);
 
   for (const segment of splitIntoSegments(backboneAtoms)) {
-    // A lone residue has no neighbour to connect to; its atom sphere still shows it.
-    if (segment.length < 2) continue;
-
-    const points = segment.map(atom => new THREE.Vector3(atom.x, atom.y, atom.z));
-
-    // Catmull-Rom fits a curve through the CA positions so the trace reads as a
-    // continuous ribbon rather than kinked segments.
-    const curve = new THREE.CatmullRomCurve3(points);
-
-    // 4 tubular segments per residue keeps the curve smooth without exploding the
-    // vertex count.
-    const geometry = new THREE.TubeGeometry(curve, points.length * 4, radius, 8, false);
-
-    group.add(new THREE.Mesh(geometry, material));
+    if (showSecondaryStructure) {
+      addSecondaryStructureRuns(group, segment, residueRadius);
+    } else {
+      addTube(group, segment, residueRadius * BACKBONE_RADIUS_RATIO, plainMaterial);
+    }
   }
 
   return group;
 }
+
+/**
+ * Draws one connected segment as a sequence of helix, strand and coil runs.
+ */
+function addSecondaryStructureRuns(group, segment, residueRadius) {
+  const runs = groupBySecondaryStructure(segment);
+  
+  runs.forEach((run, index) => {
+    const points = [...run.atoms];
+    
+    // Carry the first residue of the next run into this one so consecutive
+    // tubes meet. Without the overlap each change of secondary structure would
+    // leave a visible break in the trace
+    const next = runs[index + 1];
+    if (next) points.push(next.atoms[0]);
+    
+    const material = new THREE.MeshStandardMaterial({
+      color: SS_COLORS[run.type] ?? SS_COLORS[COIL],
+      roughness: 0.5,
+      metalness: 0.0,
+    });
+    
+    const ratio = SS_RADIUS_RATIOS[run.type] ?? SS_RADIUS_RATIOS[COIL];
+    const radius = residueRadius * ratio;
+    addTube(group, points, radius, material);
+    
+    // TubeGeometry has no end caps, so where a thick helix meets a thin coil
+    // the wider tube ends on an open, backface-culled ring you can see through.
+    // A sphere at the junction, sized to the wider side, fills it
+    if (next) {
+      const nextRatio = SS_RADIUS_RATIOS[next.type] ?? SS_RADIUS_RATIOS[COIL];
+      addJunctionCap(group, next.atoms[0], Math.max(radius, residueRadius * nextRatio), material);
+    }
+  });
+}
+
+/**
+ * Fills the open end of a tube where two runs of different radius meet.
+ */
+function addJunctionCap(group, atom, radius, material) {
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 10), material);
+  cap.position.set(atom.x, atom.y, atom.z);
+  group.add(cap);
+}
+
+/**
+ * Adds one tube through a run of residues, if it is long enough to define one.
+ */
+function addTube(group, atoms, radius, material) {
+  // A single isolated residue has no neighbour to connect to. Its position is
+  // still shown by the atom sphere, so nothing is lost by skipping it here
+  if (atoms.length < 2) return;
+  
+  const points = atoms.map(atom => new THREE.Vector3(atom.x, atom.y, atom.z));
+  
+  // CatmullRomCurve3 fits a smooth curve through the CA positions,
+  // so the trace reads as a continuous ribbon rather than kinked segments
+  const curve = new THREE.CatmullRomCurve3(points);
+  
+  // TubeGeometry sweeps a circle along the curve
+  // Parameters: (curve, tubularSegments, radius, radialSegments, closed)
+  // - tubularSegments: 4 per residue keeps the curve smooth without exploding vertex count
+  const geometry = new THREE.TubeGeometry(curve, points.length * 4, radius, 8, false);
+  
+  group.add(new THREE.Mesh(geometry, material));
+}
+
+/**
+ * The longest plausible distance between consecutive alpha carbons, in Angstroms.
 
 /**
  * Longest plausible distance between consecutive alpha carbons, in Angstroms.

@@ -15,6 +15,7 @@ import StructureInfo from './components/StructureInfo';
 
 import { parsePDB, parseHeader, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
 import { centerProtein } from './utils/proteinGeometry';
+import { parseSecondaryStructure, assignSecondaryStructure } from './utils/secondaryStructure';
 
 function App() {
   // Centered CA atoms for visualization; null until a file is loaded.
@@ -25,6 +26,16 @@ function App() {
   const [header, setHeader] = useState(null);
   const [showBackbone, setShowBackbone] = useState(true);
   const [showAtoms, setShowAtoms] = useState(true);
+  
+  /**
+   * showSecondaryStructure - Draw helices and strands as a tube cartoon
+   */
+  const [showSecondaryStructure, setShowSecondaryStructure] = useState(true);
+  
+  /**
+   * hasSecondaryStructure - Whether the file declared any HELIX or SHEET records
+   */
+  const [hasSecondaryStructure, setHasSecondaryStructure] = useState(false);
   const [colorScheme, setColorScheme] = useState('residue');
 
   /** Parses uploaded PDB text and loads the centered backbone into state. */
@@ -42,6 +53,12 @@ function App() {
     let backbone = getBackboneAtoms(allAtoms);
     console.log(`Found ${backbone.length} backbone (CA) atoms`);
 
+    // From the file's own HELIX and SHEET records rather than recomputed: deriving
+    // it geometrically needs backbone N, C and O atoms a CA trace does not carry.
+    const ssRanges = parseSecondaryStructure(pdbText);
+    console.log(`Found ${ssRanges.length} secondary structure ranges`);
+    backbone = assignSecondaryStructure(backbone, ssRanges);
+
     backbone = centerProtein(backbone);
 
     // Header passed in so observed residues can be compared against SEQRES,
@@ -52,6 +69,9 @@ function App() {
     setBackboneAtoms(backbone);
     setProteinInfo(info);
     setHeader(structureHeader);
+    // Older entries and predicted models often omit these records entirely.
+    setHasSecondaryStructure(ssRanges.length > 0);
+
 
     console.log('=== Processing Complete ===');
   };
@@ -142,6 +162,9 @@ function App() {
               onShowBackboneChange={setShowBackbone}
               showAtoms={showAtoms}
               onShowAtomsChange={setShowAtoms}
+              showSecondaryStructure={showSecondaryStructure}
+              onShowSecondaryStructureChange={setShowSecondaryStructure}
+              hasSecondaryStructure={hasSecondaryStructure}
               colorScheme={colorScheme}
               onColorSchemeChange={setColorScheme}
             />
@@ -154,6 +177,7 @@ function App() {
               backboneAtoms={backboneAtoms}
               showBackbone={showBackbone}
               showAtoms={showAtoms}
+              showSecondaryStructure={showSecondaryStructure && hasSecondaryStructure}
               colorScheme={colorScheme}
             />
           ) : (

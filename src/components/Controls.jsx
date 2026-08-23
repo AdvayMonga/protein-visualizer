@@ -2,6 +2,11 @@
 
 import React from 'react';
 
+/**
+ * @param {boolean} props.showSecondaryStructure - Whether the cartoon is drawn
+ * @param {Function} props.onShowSecondaryStructureChange - Callback for that toggle
+ * @param {boolean} props.hasSecondaryStructure - Whether the file declared any
+ */
 function Controls({ 
   proteinInfo, 
   showBackbone = true, 
@@ -9,7 +14,10 @@ function Controls({
   showAtoms = true,
   onShowAtomsChange,
   colorScheme = 'residue',
-  onColorSchemeChange
+  onColorSchemeChange,
+  showSecondaryStructure = false,
+  onShowSecondaryStructureChange,
+  hasSecondaryStructure = false
 }) {
   const panelStyle = {
     padding: '15px',
@@ -107,6 +115,22 @@ function Controls({
         <span style={checkboxLabelStyle}>Show Backbone Line</span>
       </label>
       
+      {/* Hidden when the file declares no HELIX or SHEET records - common for older
+          entries and predicted models - since the toggle would do nothing. */}
+      {hasSecondaryStructure && (
+        <label style={{ ...checkboxContainerStyle, opacity: showBackbone ? 1 : 0.5 }}>
+          <input 
+            type="checkbox"
+            checked={showSecondaryStructure}
+            // The cartoon is how the backbone is drawn, so it has nothing to act on
+            // while the backbone is hidden. Disabled rather than absent, so the
+            // setting does not silently appear to have no effect.
+            disabled={!showBackbone}
+            onChange={(e) => onShowSecondaryStructureChange && onShowSecondaryStructureChange(e.target.checked)}
+          />
+          <span style={checkboxLabelStyle}>Show Secondary Structure</span>
+        </label>
+      )}
       <label style={checkboxContainerStyle}>
         <input 
           type="checkbox"

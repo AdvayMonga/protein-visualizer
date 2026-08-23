@@ -31,7 +31,7 @@ function disposeObject(object) {
  * The geometry helpers return raw Three.js objects rather than R3F elements, so the
  * group is populated imperatively in an effect and rebuilt whenever the inputs change.
  */
-function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
+function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme }) {
   const groupRef = useRef();
 
   useEffect(() => {
@@ -50,7 +50,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
     }
 
     if (showBackbone) {
-      const backboneLine = createBackboneLine(backboneAtoms);
+      const backboneLine = createBackboneLine(backboneAtoms, { showSecondaryStructure });
       groupRef.current.add(backboneLine);
     }
 
@@ -64,7 +64,8 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
     return () => {
       group.children.forEach(disposeObject);
     };
-  }, [backboneAtoms, showBackbone, showAtoms, colorScheme]);
+  }, [backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme]);
+
 
   return <group ref={groupRef} />;
 }
@@ -97,7 +98,7 @@ function DepthFog({ radius }) {
   return <fog attach="fog" args={['#1a1a2e', 1, 1000]} />;
 }
 
-function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, colorScheme = 'residue' }) {
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue' }) {
   // Pull the camera back proportionally to the protein so it fits the frame at any size.
   const cameraDistance = useMemo(() => {
     if (!backboneAtoms || backboneAtoms.length === 0) return 50;
@@ -145,6 +146,7 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, c
             backboneAtoms={backboneAtoms}
             showBackbone={showBackbone}
             showAtoms={showAtoms}
+            showSecondaryStructure={showSecondaryStructure}
             colorScheme={colorScheme}
           />
         )}
