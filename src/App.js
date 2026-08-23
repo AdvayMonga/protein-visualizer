@@ -11,8 +11,9 @@ import './App.css';
 import FileUpload from './components/FileUpload';
 import ProteinViewer from './components/ProteinViewer';
 import Controls from './components/Controls';
+import StructureInfo from './components/StructureInfo';
 
-import { parsePDB, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
+import { parsePDB, parseHeader, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
 import { centerProtein } from './utils/proteinGeometry';
 
 function App() {
@@ -20,6 +21,8 @@ function App() {
   const [backboneAtoms, setBackboneAtoms] = useState(null);
   // Stats for the info panel: totalAtoms, residueCount, chainCount, chains.
   const [proteinInfo, setProteinInfo] = useState(null);
+  // Header metadata: idCode, title, method, resolution, rValue, rFree, seqres, modelCount.
+  const [header, setHeader] = useState(null);
   const [showBackbone, setShowBackbone] = useState(true);
   const [showAtoms, setShowAtoms] = useState(true);
   const [colorScheme, setColorScheme] = useState('residue');
@@ -31,16 +34,24 @@ function App() {
     const allAtoms = parsePDB(pdbText);
     console.log(`Parsed ${allAtoms.length} total atoms`);
 
+    // Read separately from the coordinates because it answers a different
+    // question: not where the atoms are, but how much to trust them.
+    const structureHeader = parseHeader(pdbText);
+    console.log('Structure header:', structureHeader);
+
     let backbone = getBackboneAtoms(allAtoms);
     console.log(`Found ${backbone.length} backbone (CA) atoms`);
 
     backbone = centerProtein(backbone);
 
-    const info = getProteinInfo(allAtoms);
+    // Header passed in so observed residues can be compared against SEQRES,
+    // which is what reveals unresolved regions.
+    const info = getProteinInfo(allAtoms, structureHeader);
     console.log('Protein info:', info);
 
     setBackboneAtoms(backbone);
     setProteinInfo(info);
+    setHeader(structureHeader);
 
     console.log('=== Processing Complete ===');
   };
@@ -116,6 +127,13 @@ function App() {
       <main style={mainLayoutStyle}>
         <aside style={sidebarStyle}>
           <FileUpload onFileLoaded={handleFileLoaded} />
+
+          {header && (
+            <StructureInfo
+              header={header}
+              chainDetails={proteinInfo ? proteinInfo.chainDetails : []}
+            />
+          )}
 
           {proteinInfo && (
             <Controls 
