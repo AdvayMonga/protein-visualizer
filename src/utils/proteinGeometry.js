@@ -285,14 +285,29 @@ export function getBoundingRadius(atoms) {
  * pixel across and the whole protein dissolves into noise. Scaling the radius with
  * the protein instead holds the apparent size roughly constant at any size.
  *
+ * That scaling has to stop somewhere, though, and the limit is physical rather than
+ * visual: consecutive alpha carbons sit CA_SPACING apart no matter how large the
+ * structure is. Once the radius passes half that, neighbouring residues intersect and
+ * the chain renders as one fused sausage instead of a row of beads - so the cap is
+ * what keeps per-residue detail readable on large complexes.
+ *
  * The floor keeps small proteins at the original 0.5 A, so anything that already
  * looked right is untouched.
  *
  * @param {Array<Object>} atoms - Centered atoms
  * @returns {number} - Sphere radius in Angstroms
  */
+
+// Distance between consecutive alpha carbons in a polypeptide backbone.
+const CA_SPACING = 3.8;
+
+// Held below CA_SPACING / 2 so adjacent residues keep a visible gap rather than
+// merging at exactly the point they touch.
+const MAX_RESIDUE_RADIUS = CA_SPACING * 0.37;
+
 function getResidueRadius(atoms) {
-  return Math.max(0.5, getMaxDimension(atoms) * 0.016);
+  const scaled = Math.max(0.5, getMaxDimension(atoms) * 0.016);
+  return Math.min(MAX_RESIDUE_RADIUS, scaled);
 }
 
 // The backbone trace is drawn at a fraction of the residue radius so it always
