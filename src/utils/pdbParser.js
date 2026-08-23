@@ -25,28 +25,30 @@
 /**
  * Extracts every ATOM and HETATM record from PDB text.
  *
+ * MODEL blocks mean two incompatible things, and which one a file intends can only
+ * be told from the coordinates - see keepRelevantModels().
+ *
  * @param {string} pdbText - Raw contents of a PDB file
- * @returns {Array<Object>} Atoms with serial, name, residue, chain, residueNum, x, y, z, element
+ * @returns {Array<Object>} Atoms with record, serial, name, altLoc, residue, chain,
+ *   residueNum, iCode, x, y, z, occupancy, bFactor, element, model
  */
 export function parsePDB(pdbText) {
   const lines = pdbText.split('\n');
   const atoms = [];
 
-  // NMR files hold many models of the same molecule in MODEL/ENDMDL blocks.
-  // Drawing them all superimposes every conformer, so only the first is kept.
-  let modelNumber = 0;
+  // Which MODEL block the atoms being read belong to. Files with no MODEL records
+  // leave this at 1.
+  let model = 1;
 
   for (const line of lines) {
+    // MODEL record: columns 11-14 hold the model serial number
     if (line.startsWith('MODEL')) {
-      modelNumber += 1;
+      model = parseInt(line.substring(10, 14).trim()) || model + 1;
       continue;
     }
 
     // HETATM covers water, ligands, ions, and modified residues.
     if (line.startsWith('ATOM') || line.startsWith('HETATM')) {
-      // Files with no MODEL records leave this at 0 and parse normally.
-      if (modelNumber > 1) continue;
-
       const atom = {
         record: line.substring(0, 6).trim(),
         serial: parseInt(line.substring(6, 11).trim()),
@@ -69,13 +71,88 @@ export function parsePDB(pdbText) {
         // absent, since many tool-written files stop after the Z coordinate.
         bFactor: toNumberOrNull(line.substring(60, 66).trim()),
         element: line.substring(76, 78).trim(),
+
+        // Which MODEL this atom came from (1 for single-model files)
+        model: model,
       };
 
       atoms.push(atom);
     }
   }
 
-  return atoms;
+  return keepRelevantModels(atoms);
+}
+
+// A second model whose centre sits closer to the first than this fraction of the
+// structure's own size is taken to be superimposed on it. NMR conformers land far
+// below it (they are fitted on top of each other); assembly copies land far above
+// (they are moved to their place in the complex), so the exact value is not delicate.
+const SUPERIMPOSED_FRACTION = 0.25;
+
+/**
+ * Decides what a file's MODEL blocks were meant to express, and drops the ones that
+ * should not be drawn.
+ *
+ * MODEL means two incompatible things depending on the file:
+ *
+ * - An NMR ensemble stores many conformers of one molecule, all fitted on top of each
+ *   other. Drawing them together superimposes twenty copies into an unreadable blur,
+ *   so only the first belongs on screen.
+ * - A biological assembly stores copies of a subunit moved into their places in the
+ *   complex, reusing the same chain letters. Here the later models are most of the
+ *   structure - dropping them turns hemoglobin's tetramer back into a dimer.
+ *
+ * Nothing in the MODEL record distinguishes the two, so the coordinates decide it:
+ * conformers sit on top of each other, assembly copies sit apart. This is the same
+ * reasoning splitIntoSegments uses for chain breaks - the physical test is the honest
+ * one when the bookkeeping is ambiguous.
+ *
+ * @param {Array<Object>} atoms - All parsed atoms, tagged with their model
+ * @returns {Array<Object>} Either every atom, or only those of the first model
+ */
+function keepRelevantModels(atoms) {
+  const first = [];
+  const second = [];
+  let firstModel = null;
+  let secondModel = null;
+
+  for (const atom of atoms) {
+    if (firstModel === null) firstModel = atom.model;
+
+    if (atom.model === firstModel) {
+      first.push(atom);
+    } else if (secondModel === null || atom.model === secondModel) {
+      secondModel = atom.model;
+      second.push(atom);
+    }
+  }
+
+  // Single-model file: nothing to decide.
+  if (second.length === 0) return atoms;
+
+  const firstCentre = centroidOf(first);
+  const separation = distance(firstCentre, centroidOf(second));
+
+  // Scale the test to the structure: "far apart" only means anything relative to how
+  // big the thing is. Radius rather than diameter, since a copy only has to clear the
+  // subunit's own extent to be somewhere else.
+  const radius = first.reduce((max, a) => Math.max(max, distance(firstCentre, a)), 0);
+
+  return separation < radius * SUPERIMPOSED_FRACTION ? first : atoms;
+}
+
+/** Mean position of a set of atoms. */
+function centroidOf(atoms) {
+  const sum = atoms.reduce(
+    (acc, a) => ({ x: acc.x + a.x, y: acc.y + a.y, z: acc.z + a.z }),
+    { x: 0, y: 0, z: 0 }
+  );
+  return { x: sum.x / atoms.length, y: sum.y / atoms.length, z: sum.z / atoms.length };
+}
+
+/** Straight-line distance between two points. */
+function distance(a, b) {
+  return Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
 }
 
 /**
