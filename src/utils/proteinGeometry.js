@@ -83,19 +83,19 @@ function addSecondaryStructureRuns(group, segment, residueRadius) {
   
   runs.forEach((run, index) => {
     const points = [...run.atoms];
-    
+
     // Carry the first residue of the next run into this one so consecutive
     // tubes meet. Without the overlap each change of secondary structure would
     // leave a visible break in the trace
     const next = runs[index + 1];
     if (next) points.push(next.atoms[0]);
-    
+
     const material = new THREE.MeshStandardMaterial({
       color: SS_COLORS[run.type] ?? SS_COLORS[COIL],
       roughness: 0.5,
       metalness: 0.0,
     });
-    
+
     const ratio = SS_RADIUS_RATIOS[run.type] ?? SS_RADIUS_RATIOS[COIL];
     const radius = residueRadius * ratio;
     addTube(group, points, radius, material);

@@ -89,6 +89,12 @@ export function parsePDB(pdbText) {
 // (they are moved to their place in the complex), so the exact value is not delicate.
 const SUPERIMPOSED_FRACTION = 0.25;
 
+// Floor for that threshold, in Angstroms. Needed because the fraction alone says
+// nothing when the first model has no extent to scale against - a single atom, or a
+// handful of coincident ones. Two copies of a subunit cannot genuinely sit this close
+// anyway; they would occupy the same space.
+const MIN_SEPARATION = 5;
+
 /**
  * Decides what a file's MODEL blocks were meant to express, and drops the ones that
  * should not be drawn.
@@ -137,8 +143,9 @@ function keepRelevantModels(atoms) {
   // big the thing is. Radius rather than diameter, since a copy only has to clear the
   // subunit's own extent to be somewhere else.
   const radius = first.reduce((max, a) => Math.max(max, distance(firstCentre, a)), 0);
+  const threshold = Math.max(radius * SUPERIMPOSED_FRACTION, MIN_SEPARATION);
 
-  return separation < radius * SUPERIMPOSED_FRACTION ? first : atoms;
+  return separation < threshold ? first : atoms;
 }
 
 /** Mean position of a set of atoms. */
@@ -169,7 +176,8 @@ export function getBackboneAtoms(atoms) {
     // A calcium ion is atom CA in residue CA, so name alone would draw it as a
     // residue and count it as one. Tested on residue name rather than record
     // type because modified residues like selenomethionine are HETATM too but
-    // genuinely belong to the chain.
+    // genuinely belong to the chain. mmCIF and BinaryCIF carry the same
+    // distinction in group_PDB, which their parsers map onto `record`.
     if (atom.record === 'HETATM' && atom.residue === 'CA') return false;
 
     // Each conformation of an alternate-location residue gets its own CA, which

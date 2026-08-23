@@ -23,7 +23,7 @@
  * like .pdb1 and .cif that do not map cleanly to a format, and users rename files.
  */
 
-import { parsePDB } from './pdbParser';
+import { parsePDB, getBackboneAtoms } from './pdbParser';
 import { parseCIF } from './cifParser';
 import { parseBinaryCIF } from './binaryCifParser';
 
@@ -137,6 +137,24 @@ export async function loadStructure(file) {
       'No atom coordinates found in this file. Sequence (FASTA), validation and ' +
       'structure-factor downloads are not structures - use a PDB, mmCIF, BinaryCIF ' +
       'or Biological Assembly download instead.'
+    );
+  }
+
+  // A single bad coordinate is worse than none: getCentroid averages every position,
+  // so one NaN spreads to all of them and the structure silently vanishes from an
+  // otherwise working viewer
+  const broken = atoms.find(a => !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.z));
+  if (broken) {
+    throw new Error(`This file has unreadable coordinates (atom ${broken.serial}).`);
+  }
+
+  // The viewer traces alpha carbons, so a structure without them renders as an
+  // empty scene. DNA and RNA entries are the common case, and mmCIF/BinaryCIF
+  // support makes them easy to reach - say so rather than showing a blank canvas
+  if (getBackboneAtoms(atoms).length === 0) {
+    throw new Error(
+      `Found ${atoms.length} atoms but no protein backbone (alpha carbons). ` +
+      'This is usually a DNA or RNA structure, which this viewer cannot draw yet.'
     );
   }
 

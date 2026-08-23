@@ -36,6 +36,13 @@ const NULL_TOKENS = new Set(['.', '?']);
 
 const ATOM_SITE_PREFIX = '_atom_site.';
 
+// One definition of whitespace, used both to skip between tokens and to end one.
+// These must be the same predicate: if a character ends a token but is not skipped,
+// the tokenizer parks on it forever, appending empty tokens until the tab dies.
+// \s covers more than the ASCII four - \f, \v, NBSP and the U+2000 block all match,
+// and a stray NBSP from an editor or a copy/paste is entirely plausible in a CIF.
+const WHITESPACE = /\s/;
+
 /**
  * Splits CIF text into tokens, tracking whether each was quoted.
  *
@@ -61,7 +68,7 @@ function tokenize(text) {
       continue;
     }
 
-    if (char === ' ' || char === '\t' || char === '\r') {
+    if (WHITESPACE.test(char)) {
       i++;
       continue;
     }
@@ -93,7 +100,7 @@ function tokenize(text) {
       i++;
       const start = i;
       while (i < len) {
-        if (text[i] === char && (i + 1 >= len || /\s/.test(text[i + 1]))) break;
+        if (text[i] === char && (i + 1 >= len || WHITESPACE.test(text[i + 1]))) break;
         i++;
       }
       tokens.push({ value: text.slice(start, i), quoted: true });
@@ -103,7 +110,7 @@ function tokenize(text) {
 
     // Bare token: runs until whitespace
     const start = i;
-    while (i < len && !/\s/.test(text[i])) i++;
+    while (i < len && !WHITESPACE.test(text[i])) i++;
     tokens.push({ value: text.slice(start, i), quoted: false });
   }
 
@@ -180,7 +187,19 @@ export function parseCIF(cifText) {
  */
 function buildAtoms(values, width, columnOf) {
   const atoms = [];
-  const rowCount = Math.floor(values.length / width);
+
+  // A loop's values must divide evenly into rows. A remainder means tokenization
+  // went wrong somewhere - an unterminated quote, say - and every row after that
+  // point is shifted into the wrong columns. Rounding the count down would hide
+  // that and hand back a plausible-looking structure of garbage coordinates.
+  if (values.length % width !== 0) {
+    throw new Error(
+      `Malformed mmCIF: the _atom_site table has ${values.length} values, ` +
+      `which is not a whole number of ${width}-column rows.`
+    );
+  }
+
+  const rowCount = values.length / width;
 
   // Reads the first tag that is present and not a CIF null marker
   const field = (rowStart, ...names) => {

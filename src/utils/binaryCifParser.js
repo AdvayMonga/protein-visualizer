@@ -242,6 +242,13 @@ function decodeIntegerPacking(data, encoding) {
     while (current === upper || current === lower) {
       value += current;
       i++;
+      // A run must be terminated by a non-saturated value. Running off the end
+      // means the file is truncated; without this check the read yields undefined,
+      // NaN lands in the Int32Array as 0, and the structure comes out subtly wrong
+      // with nothing to indicate it
+      if (i >= data.length) {
+        throw new Error('Malformed BinaryCIF: packed integer run is truncated.');
+      }
       current = data[i];
     }
     value += current;
@@ -316,7 +323,15 @@ function decodeColumn(data, encodings) {
  * @returns {Array<Object>} - Atom objects in the same shape parsePDB() returns
  */
 export function parseBinaryCIF(buffer) {
-  const file = decodeMessagePack(buffer);
+  let file;
+  try {
+    file = decodeMessagePack(buffer);
+  } catch (err) {
+    // A truncated download trips this deep inside the MessagePack reader, where
+    // the message ("Offset is outside the bounds of the DataView") means nothing
+    // to someone who just picked a file
+    throw new Error('This BinaryCIF file is corrupt or incomplete - try downloading it again.');
+  }
 
   const block = file.dataBlocks && file.dataBlocks[0];
   if (!block) return [];
