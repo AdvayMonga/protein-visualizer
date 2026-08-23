@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { groupBySecondaryStructure, HELIX, SHEET, COIL } from './secondaryStructure';
+import { resolveElement, getElementColor, getElementRadius } from './ligands';
 
 /**
  * Tube radius per secondary structure element, as a fraction of the residue
@@ -249,6 +250,73 @@ export function createAtomSpheres(backboneAtoms, colorScheme = 'residue', option
 }
 
 /**
+ * Creates spheres for heteroatoms - ligands, cofactors, ions and water.
+ *
+ * Coloured by element rather than by residue, using the CPK convention, because
+ * a ligand is read atom by atom: which atoms coordinate a metal, where the
+ * oxygens sit. Residue-level colouring answers none of that. Radii are scaled
+ * down from van der Waals values so individual atoms stay distinguishable
+ * instead of fusing into one blob.
+ *
+ * Radii are scaled by the same factor as the residue spheres. Camera distance
+ * grows with the protein, so fixed Angstrom radii shrink on screen as
+ * structures get larger - on a 300 A structure an unscaled haem would be
+ * sub-pixel while the residues around it stayed visible.
+ *
+ * @param {Array<Object>} ligandAtoms - Heteroatoms, already centered
+ * @param {number} scale - Multiplier matching the residue sphere scaling
+ * @returns {Array<THREE.Mesh>} - One sphere per atom
+ */
+export function createLigandSpheres(ligandAtoms, scale = 1) {
+  return ligandAtoms.map(atom => {
+    const element = resolveElement(atom);
+    
+    const geometry = new THREE.SphereGeometry(getElementRadius(element) * scale, 12, 12);
+    const material = new THREE.MeshStandardMaterial({
+      color: getElementColor(element),
+      roughness: 0.3,
+      metalness: 0.1,
+    });
+    
+    const sphere = new THREE.Mesh(geometry, material);
+    sphere.position.set(atom.x, atom.y, atom.z);
+    
+    // Same shape of userData as the backbone spheres, so anything reading a
+    // picked object works for ligands without special-casing them
+    sphere.userData = {
+      atomInfo: atom,
+      residue: atom.residue,
+      residueNum: atom.residueNum,
+      chain: atom.chain,
+    };
+    
+    return sphere;
+  });
+}
+
+/**
+ * Centers the protein at the origin (0, 0, 0) for optimal viewing.
+ * 
+ * Why center?
+ * - PDB coordinates are in the crystallographic reference frame
+ * - Proteins can be located anywhere in 3D space
+ * - Centering puts the protein at the camera's natural focus point
+ * - Makes rotation orbit around the protein's center
+ * - Prevents the protein from being off-screen when loaded
+ * 
+ * The centering process:
+ * 1. Calculate the average (centroid) of all atom positions
+ * 2. Subtract the centroid from each atom's position
+ * 3. Result: protein is centered at (0, 0, 0)
+ * 
+ * @param {Array<Object>} atoms - Array of atoms to center
+ * @returns {Array<Object>} - New array with centered coordinates (original unchanged)
+ * 
+ * @example
+ * const centeredAtoms = centerProtein(backbone);
+ * // Now the protein's center of mass is at (0, 0, 0)
+
+/**
  * Shifts atoms so their centroid sits at the origin, which is where the camera looks
  * and what OrbitControls rotates around.
  *
@@ -257,18 +325,51 @@ export function createAtomSpheres(backboneAtoms, colorScheme = 'residue', option
  */
 export function centerProtein(atoms) {
   if (atoms.length === 0) return atoms;
+  
+  const centroid = getCentroid(atoms);
+  
+  // Log the offset for debugging purposes
+  console.log(`Centering protein: offset (${centroid.x.toFixed(2)}, ${centroid.y.toFixed(2)}, ${centroid.z.toFixed(2)})`);
+  
+  return translateAtoms(atoms, centroid);
+}
 
-  const avgX = atoms.reduce((sum, a) => sum + a.x, 0) / atoms.length;
-  const avgY = atoms.reduce((sum, a) => sum + a.y, 0) / atoms.length;
-  const avgZ = atoms.reduce((sum, a) => sum + a.z, 0) / atoms.length;
+/**
+ * Calculates the average position of a set of atoms.
+ *
+ * Exposed separately because anything drawn alongside the protein has to be
+ * shifted by the protein's centroid, not by its own. A ligand centred on itself
+ * would land at the origin, tearing it out of the binding site that is the
+ * entire reason for looking at it.
+ *
+ * @param {Array<Object>} atoms - Atoms to average
+ * @returns {{x: number, y: number, z: number}} - The centroid
+ */
+export function getCentroid(atoms) {
+  if (atoms.length === 0) return { x: 0, y: 0, z: 0 };
+  
+  return {
+    x: atoms.reduce((sum, a) => sum + a.x, 0) / atoms.length,
+    y: atoms.reduce((sum, a) => sum + a.y, 0) / atoms.length,
+    z: atoms.reduce((sum, a) => sum + a.z, 0) / atoms.length,
+  };
+}
 
-  console.log(`Centering protein: offset (${avgX.toFixed(2)}, ${avgY.toFixed(2)}, ${avgZ.toFixed(2)})`);
-
+/**
+ * Shifts atoms by a given offset, leaving the originals untouched.
+ *
+ * @param {Array<Object>} atoms - Atoms to shift
+ * @param {{x: number, y: number, z: number}} offset - Amount to subtract
+ * @returns {Array<Object>} - New array with shifted coordinates
+ */
+export function translateAtoms(atoms, offset) {
+  // Spread copies every other property (serial, name, residue, ...) so callers
+  // keep the atom metadata they need downstream
   return atoms.map(atom => ({
     ...atom,
-    x: atom.x - avgX,
-    y: atom.y - avgY,
-    z: atom.z - avgZ
+    x: atom.x - offset.x,
+    y: atom.y - offset.y,
+    z: atom.z - offset.z,
   }));
 }
 
@@ -335,6 +436,19 @@ export function getBoundingRadius(atoms) {
 }
 
 /**
+ * How much the structure's size has inflated the residue radius.
+ *
+ * Anything drawn alongside the residues multiplies its own radii by this, so
+ * ligands and markers keep their proportions instead of shrinking away.
+ *
+ * @param {Array<Object>} atoms - Centered atoms
+ * @returns {number} - Multiplier, 1 for structures at the base size
+ */
+export function getGeometryScale(atoms) {
+  return getResidueRadius(atoms) / BASE_RESIDUE_RADIUS;
+}
+
+/**
  * Radius to draw each residue sphere at.
  *
  * Camera distance scales with the protein, so a fixed radius shrinks on screen as
@@ -362,12 +476,16 @@ const CA_SPACING = 3.8;
 const MAX_RESIDUE_RADIUS = CA_SPACING * 0.37;
 
 export function getResidueRadius(atoms) {
-  const scaled = Math.max(0.5, getMaxDimension(atoms) * 0.016);
+  const scaled = Math.max(BASE_RESIDUE_RADIUS, getMaxDimension(atoms) * 0.016);
   return Math.min(MAX_RESIDUE_RADIUS, scaled);
 }
 
-// The backbone trace is drawn at a fraction of the residue radius so it always reads
-// as a thread through the spheres rather than a tube swallowing them.
+// The radius small structures are drawn at, and the baseline the scale factor
+// is measured against
+const BASE_RESIDUE_RADIUS = 0.5;
+
+// The backbone trace is drawn at a fraction of the residue radius so it always
+// reads as a thread through the spheres rather than a tube swallowing them.
 const BACKBONE_RADIUS_RATIO = 0.3;
 
 /** Residue colors grouped by chemical character. */

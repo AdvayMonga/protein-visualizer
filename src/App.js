@@ -14,8 +14,9 @@ import Controls from './components/Controls';
 import StructureInfo from './components/StructureInfo';
 
 import { parsePDB, parseHeader, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
-import { centerProtein, looksLikePredictedModel } from './utils/proteinGeometry';
+import { getCentroid, translateAtoms, looksLikePredictedModel } from './utils/proteinGeometry';
 import { parseSecondaryStructure, assignSecondaryStructure } from './utils/secondaryStructure';
+import { getLigandAtoms, getLigandSummary, isWater } from './utils/ligands';
 
 /**
  * Chain IDs that actually have a backbone to draw.
@@ -38,6 +39,15 @@ function App() {
   const [header, setHeader] = useState(null);
   const [showBackbone, setShowBackbone] = useState(true);
   const [showAtoms, setShowAtoms] = useState(true);
+  // Centered HETATM records: ligands, ions, cofactors and water.
+  const [heteroAtoms, setHeteroAtoms] = useState(null);
+  const [showLigands, setShowLigands] = useState(true);
+  // Off by default: a high resolution structure can carry hundreds of waters.
+  const [showWater, setShowWater] = useState(false);
+  // One entry per distinct ligand, for the info panel.
+  const [ligandSummary, setLigandSummary] = useState([]);
+  // Tracked apart from the ligand list, which excludes water.
+  const [hasWater, setHasWater] = useState(false);
   // A Set so membership checks stay constant time; complexes have dozens of
   // chains. null means nothing is loaded yet.
   const [visibleChains, setVisibleChains] = useState(null);
@@ -79,7 +89,19 @@ function App() {
     console.log(`Found ${ssRanges.length} secondary structure ranges`);
     backbone = assignSecondaryStructure(backbone, ssRanges);
 
-    backbone = centerProtein(backbone);
+    // The centroid comes from the backbone and is then applied to the heteroatoms
+    // too: centering a ligand on itself would move it to the origin, out of the
+    // binding site it occupies.
+    const centroid = getCentroid(backbone);
+    backbone = translateAtoms(backbone, centroid);
+
+    // Water is kept here so it can be toggled later.
+    const hetero = translateAtoms(
+      getLigandAtoms(allAtoms, { includeWater: true }),
+      centroid
+    );
+    const ligands = getLigandSummary(allAtoms);
+    console.log(`Found ${hetero.length} heteroatoms`, ligands);
 
     // Header passed in so observed residues can be compared against SEQRES,
     // which is what reveals unresolved regions.
@@ -88,6 +110,11 @@ function App() {
 
     setBackboneAtoms(backbone);
     setProteinInfo(info);
+    setHeteroAtoms(hetero);
+    setLigandSummary(ligands);
+    // Separate from the ligand list, which excludes water: a structure whose only
+    // heteroatoms are ordered waters would otherwise show no water toggle at all.
+    setHasWater(hetero.some(atom => isWater(atom.residue)));
     setHeader(structureHeader);
     // Older entries and predicted models often omit these records entirely.
     setHasSecondaryStructure(ssRanges.length > 0);
@@ -188,6 +215,12 @@ function App() {
               showSecondaryStructure={showSecondaryStructure}
               onShowSecondaryStructureChange={setShowSecondaryStructure}
               hasSecondaryStructure={hasSecondaryStructure}
+              showLigands={showLigands}
+              onShowLigandsChange={setShowLigands}
+              showWater={showWater}
+              onShowWaterChange={setShowWater}
+              ligandSummary={ligandSummary}
+              hasWater={hasWater}
               colorScheme={colorScheme}
               onColorSchemeChange={setColorScheme}
               visibleChains={visibleChains}
@@ -198,7 +231,11 @@ function App() {
         </aside>
 
         <section style={viewerAreaStyle}>
-          {backboneAtoms ? (
+          {/* An empty array is truthy, so length has to be checked explicitly.
+              Heteroatoms alone also count: a ligand-only or nucleic acid file has
+              real coordinates but no CA atoms. */}
+          {(backboneAtoms && backboneAtoms.length > 0) ||
+          (heteroAtoms && heteroAtoms.length > 0) ? (
             <ProteinViewer 
               backboneAtoms={backboneAtoms}
               showBackbone={showBackbone}
@@ -207,6 +244,9 @@ function App() {
               colorScheme={colorScheme}
               visibleChains={visibleChains}
               isPredicted={isPredicted}
+              heteroAtoms={heteroAtoms}
+              showLigands={showLigands}
+              showWater={showWater}
             />
           ) : (
             <div style={emptyStateStyle}>

@@ -9,8 +9,9 @@ import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { createBackboneLine, createAtomSpheres, getMaxDimension, getBoundingRadius, getResidueRadius } from '../utils/proteinGeometry';
+import { createBackboneLine, createAtomSpheres, createLigandSpheres, getMaxDimension, getBoundingRadius, getResidueRadius, getGeometryScale } from '../utils/proteinGeometry';
 import { getAtomsByChains } from '../utils/pdbParser';
+import { isWater } from '../utils/ligands';
 import {
   isClickNotDrag,
   toNormalizedDeviceCoords,
@@ -39,9 +40,13 @@ function disposeObject(object) {
  * group is populated imperatively in an effect and rebuilt whenever the inputs change.
  * The group ref is owned by ProteinViewer so the picker can raycast against it.
  */
-function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, isPredicted, groupRef }) {
+function Protein({ backboneAtoms, heteroAtoms, showBackbone, showAtoms, showLigands, showWater, showSecondaryStructure, colorScheme, isPredicted, groupRef }) {
   useEffect(() => {
-    if (!backboneAtoms || backboneAtoms.length === 0) return;
+    // Heteroatoms alone are enough to draw: a ligand-only extract or a nucleic acid
+    // structure has no CA atoms.
+    const hasBackbone = backboneAtoms && backboneAtoms.length > 0;
+    const hasHetero = heteroAtoms && heteroAtoms.length > 0;
+    if (!hasBackbone && !hasHetero) return;
     if (!groupRef.current) return;
 
     // Captured for the cleanup below: React nulls the ref before passive effect
@@ -54,23 +59,40 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructur
       groupRef.current.remove(child);
       disposeObject(child);
     }
-
-    if (showBackbone) {
+    
+    // Sizes ligand spheres in proportion to the residue spheres, falling back to the
+    // heteroatoms when there is no backbone to measure.
+    const scale = getGeometryScale(hasBackbone ? backboneAtoms : heteroAtoms);
+    
+    // Create and add the backbone line only if showBackbone is true
+    if (showBackbone && hasBackbone) {
       const backboneLine = createBackboneLine(backboneAtoms, { showSecondaryStructure });
       groupRef.current.add(backboneLine);
     }
-
-    if (showAtoms) {
+    
+    // Create and add atom spheres only if showAtoms is true
+    if (showAtoms && hasBackbone) {
       const spheres = createAtomSpheres(backboneAtoms, colorScheme, { isPredicted });
       spheres.forEach(sphere => groupRef.current.add(sphere));
     }
-
-    console.log(`Rendered protein: ${backboneAtoms.length} residues, showBackbone=${showBackbone}, showAtoms=${showAtoms}, colorScheme=${colorScheme}`);
+    
+    // Ligands and water come from the same HETATM pool but are toggled apart:
+    // a high resolution structure can carry hundreds of waters, which bury the
+    // structure, while the ligand is often the reason the file exists
+    if (heteroAtoms && heteroAtoms.length > 0) {
+      const wanted = heteroAtoms.filter(atom => {
+        const water = isWater(atom.residue);
+        return water ? showWater : showLigands;
+      });
+      createLigandSpheres(wanted, scale).forEach(sphere => groupRef.current.add(sphere));
+    }
+    
 
     return () => {
       group.children.forEach(disposeObject);
     };
-  }, [backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, isPredicted, groupRef]);
+  }, [backboneAtoms, heteroAtoms, showBackbone, showAtoms, showLigands, showWater, showSecondaryStructure, colorScheme, isPredicted, groupRef]);
+
   return <group ref={groupRef} />;
 }
 
@@ -206,8 +228,11 @@ function SelectedAtomMarker({ atom, radius }) {
  * @param {Function} props.onAtomSelect - Optional callback with the picked atom
  * @param {Set<string>|null} props.visibleChains - Chains to draw, or null for all
  * @param {boolean} props.isPredicted - Whether bFactor should be read as pLDDT
+ * @param {Array} props.heteroAtoms - Centered HETATM records, water included
+ * @param {boolean} props.showLigands - Draw non-water heteroatoms
+ * @param {boolean} props.showWater - Draw water molecules
  */
-function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', isPredicted = false, visibleChains = null, onAtomSelect }) {
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', isPredicted = false, visibleChains = null, heteroAtoms = null, showLigands = true, showWater = false, onAtomSelect }) {
   // Owned here rather than inside Protein so the picker can raycast against it.
   const groupRef = useRef();
 
@@ -328,6 +353,9 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
             colorScheme={colorScheme}
             groupRef={groupRef}
             isPredicted={isPredicted}
+            heteroAtoms={heteroAtoms}
+            showLigands={showLigands}
+            showWater={showWater}
           />
         )}
 

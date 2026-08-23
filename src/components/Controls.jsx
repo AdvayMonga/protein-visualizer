@@ -14,7 +14,12 @@ function toCssColor(hex) {
  * @param {boolean} props.hasSecondaryStructure - Whether the file declared any
  * @param {Set<string>} props.visibleChains - Chains currently drawn
  * @param {Function} props.onVisibleChainsChange - Callback with the new visible set
- * @param {boolean} props.isPredicted - Whether bFactor should be read as pLDDT
+ * @param {boolean} props.isPredicted - Whether bFactor should be read as pLDDT * @param {boolean} props.showLigands - Whether non-water heteroatoms are drawn
+ * @param {Function} props.onShowLigandsChange - Callback when ligand toggle changes
+ * @param {boolean} props.showWater - Whether water is drawn
+ * @param {Function} props.onShowWaterChange - Callback when water toggle changes
+ * @param {Array} props.ligandSummary - Distinct ligands in the structure
+ * @param {boolean} props.hasWater - Whether the file contains any water
  */
 function Controls({ 
   proteinInfo, 
@@ -29,8 +34,16 @@ function Controls({
   hasSecondaryStructure = false,
   visibleChains = null,
   onVisibleChainsChange,
-  isPredicted = false
+  isPredicted = false,
+  showLigands = true,
+  onShowLigandsChange,
+  showWater = false,
+  onShowWaterChange,
+  ligandSummary = [],
+  hasWater = false
 }) {
+  // Water is filtered out of the summary, so this counts real ligands only.
+  const hasLigands = ligandSummary.length > 0;
   // proteinInfo.chains counts every chain in the file, including ones holding only
   // water or ligands.
   const chains = proteinInfo
@@ -61,6 +74,7 @@ function Controls({
     if (!onVisibleChainsChange) return;
     onVisibleChainsChange(new Set(chains));
   };
+
   const panelStyle = {
     padding: '15px',
     backgroundColor: '#f8f9fa',
@@ -176,6 +190,20 @@ function Controls({
     borderRadius: '2px',
     flexShrink: 0,
   };
+
+  // Structures such as ribosomes carry many distinct ligands, so this scrolls.
+  const ligandListStyle = {
+    maxHeight: '120px',
+    overflowY: 'auto',
+    marginTop: '6px',
+    marginBottom: '10px',
+    fontSize: '11px',
+    color: '#666',
+  };
+  
+  const ligandRowStyle = {
+    padding: '2px 0',
+  };
   
   const selectLabelStyle = {
     fontSize: '14px',
@@ -280,6 +308,50 @@ function Controls({
         <span style={checkboxLabelStyle}>Show Atom Spheres</span>
       </label>
 
+      {/* 
+        Heteroatom toggles
+        ------------------
+        Only shown when the structure actually contains heteroatoms, so a bare
+        protein does not carry controls that do nothing.
+      */}
+      {hasLigands && (
+        <label style={checkboxContainerStyle}>
+          <input 
+            type="checkbox"
+            checked={showLigands}
+            onChange={(e) => onShowLigandsChange && onShowLigandsChange(e.target.checked)}
+          />
+          <span style={checkboxLabelStyle}>Show Ligands</span>
+        </label>
+      )}
+      
+      {/* Gated on its own signal: most structures carry water but no ligand */}
+      {hasWater && (
+        <label style={checkboxContainerStyle}>
+          <input 
+            type="checkbox"
+            checked={showWater}
+            onChange={(e) => onShowWaterChange && onShowWaterChange(e.target.checked)}
+          />
+          <span style={checkboxLabelStyle}>Show Water</span>
+        </label>
+      )}
+      
+      {hasLigands && (
+        <div style={ligandListStyle}>
+          {ligandSummary.map(ligand => (
+            <div
+              key={`${ligand.residue}-${ligand.chain}-${ligand.residueNum}-${ligand.iCode}`}
+              style={ligandRowStyle}
+            >
+              <strong>{ligand.residue}</strong> {ligand.chain}
+              {ligand.residueNum}{ligand.iCode} · {ligand.atomCount} atoms
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* Color scheme selector */}
       <div style={{ marginTop: '15px' }}>
         <label style={selectLabelStyle}>Color Scheme:</label>
         <select 
