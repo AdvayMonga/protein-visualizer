@@ -1,11 +1,9 @@
 /** Sidebar panel showing protein statistics and the display toggles. */
 
 import React from 'react';
-import { getChainColor } from '../utils/proteinGeometry';
+import { getChainColor, PLDDT_BANDS } from '../utils/proteinGeometry';
 
-/**
- * Converts a Three.js hex color number into a CSS color string.
- */
+/** Converts a Three.js hex color number into a CSS color string. */
 function toCssColor(hex) {
   return `#${hex.toString(16).padStart(6, '0')}`;
 }
@@ -16,6 +14,7 @@ function toCssColor(hex) {
  * @param {boolean} props.hasSecondaryStructure - Whether the file declared any
  * @param {Set<string>} props.visibleChains - Chains currently drawn
  * @param {Function} props.onVisibleChainsChange - Callback with the new visible set
+ * @param {boolean} props.isPredicted - Whether bFactor should be read as pLDDT
  */
 function Controls({ 
   proteinInfo, 
@@ -29,7 +28,8 @@ function Controls({
   onShowSecondaryStructureChange,
   hasSecondaryStructure = false,
   visibleChains = null,
-  onVisibleChainsChange
+  onVisibleChainsChange,
+  isPredicted = false
 }) {
   // proteinInfo.chains counts every chain in the file, including ones holding only
   // water or ligands.
@@ -161,6 +161,21 @@ function Controls({
     marginLeft: '8px',
     flexShrink: 0,
   };
+
+  const legendRowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    marginTop: '2px',
+  };
+
+  const legendSwatchStyle = {
+    display: 'inline-block',
+    width: '10px',
+    height: '10px',
+    borderRadius: '2px',
+    flexShrink: 0,
+  };
   
   const selectLabelStyle = {
     fontSize: '14px',
@@ -274,12 +289,48 @@ function Controls({
         >
           <option value="residue">By Residue Type</option>
           <option value="chain">By Chain</option>
+          <option value="rainbow">Rainbow (N &rarr; C)</option>
+          {/* Same column either way, but the two cases mean opposite things */}
+          <option value="bfactor">
+            {isPredicted ? 'By Confidence (pLDDT)' : 'By B-factor'}
+          </option>
         </select>
-        <p style={{ fontSize: '11px', color: '#888', marginTop: '5px' }}>
-          {colorScheme === 'residue' 
-            ? '🟠 Hydrophobic  🟢 Polar  🔵 Positive  🔴 Negative'
-            : 'Each chain gets a unique color'}
-        </p>
+        <div style={{ fontSize: '11px', color: '#888', marginTop: '5px' }}>
+          {colorScheme === 'residue' && (
+            <p style={{ margin: 0 }}>🟠 Hydrophobic  🟢 Polar  🔵 Positive  🔴 Negative</p>
+          )}
+          {colorScheme === 'chain' && (
+            <p style={{ margin: 0 }}>Each chain gets a unique color</p>
+          )}
+          {colorScheme === 'rainbow' && (
+            <p style={{ margin: 0 }}>
+              Blue at the N terminus running to red at the C terminus, restarting
+              for each chain. Shows the direction the chain travels.
+            </p>
+          )}
+          {colorScheme === 'bfactor' && isPredicted && (
+            <div>
+              <p style={{ margin: '0 0 4px 0' }}>
+                Predicted model — this column holds pLDDT confidence, where
+                higher is more reliable.
+              </p>
+              {PLDDT_BANDS.map(band => (
+                <div key={band.min} style={legendRowStyle}>
+                  <span
+                    style={{ ...legendSwatchStyle, backgroundColor: toCssColor(band.color) }}
+                  />
+                  {band.label}
+                </div>
+              ))}
+            </div>
+          )}
+          {colorScheme === 'bfactor' && !isPredicted && (
+            <p style={{ margin: 0 }}>
+              Blue where the model is well determined, red where atoms are
+              mobile or uncertain. Scaled to this structure's own range.
+            </p>
+          )}
+        </div>
       </div>
 
       <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#e9ecef', borderRadius: '4px' }}>

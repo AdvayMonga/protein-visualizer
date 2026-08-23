@@ -39,7 +39,7 @@ function disposeObject(object) {
  * group is populated imperatively in an effect and rebuilt whenever the inputs change.
  * The group ref is owned by ProteinViewer so the picker can raycast against it.
  */
-function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, groupRef }) {
+function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, isPredicted, groupRef }) {
   useEffect(() => {
     if (!backboneAtoms || backboneAtoms.length === 0) return;
     if (!groupRef.current) return;
@@ -61,7 +61,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructur
     }
 
     if (showAtoms) {
-      const spheres = createAtomSpheres(backboneAtoms, colorScheme);
+      const spheres = createAtomSpheres(backboneAtoms, colorScheme, { isPredicted });
       spheres.forEach(sphere => groupRef.current.add(sphere));
     }
 
@@ -70,8 +70,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructur
     return () => {
       group.children.forEach(disposeObject);
     };
-  }, [backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, groupRef]);
-
+  }, [backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, isPredicted, groupRef]);
   return <group ref={groupRef} />;
 }
 
@@ -206,8 +205,9 @@ function SelectedAtomMarker({ atom, radius }) {
  * @param {Array} props.backboneAtoms - Array of centered backbone CA atoms
  * @param {Function} props.onAtomSelect - Optional callback with the picked atom
  * @param {Set<string>|null} props.visibleChains - Chains to draw, or null for all
+ * @param {boolean} props.isPredicted - Whether bFactor should be read as pLDDT
  */
-function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', visibleChains = null, onAtomSelect }) {
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', isPredicted = false, visibleChains = null, onAtomSelect }) {
   // Owned here rather than inside Protein so the picker can raycast against it.
   const groupRef = useRef();
 
@@ -327,6 +327,7 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
             showSecondaryStructure={showSecondaryStructure}
             colorScheme={colorScheme}
             groupRef={groupRef}
+            isPredicted={isPredicted}
           />
         )}
 

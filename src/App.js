@@ -5,7 +5,7 @@
  * -> ProteinViewer renders it.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import './App.css';
 
 import FileUpload from './components/FileUpload';
@@ -14,7 +14,7 @@ import Controls from './components/Controls';
 import StructureInfo from './components/StructureInfo';
 
 import { parsePDB, parseHeader, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
-import { centerProtein } from './utils/proteinGeometry';
+import { centerProtein, looksLikePredictedModel } from './utils/proteinGeometry';
 import { parseSecondaryStructure, assignSecondaryStructure } from './utils/secondaryStructure';
 
 /**
@@ -41,6 +41,11 @@ function App() {
   // A Set so membership checks stay constant time; complexes have dozens of
   // chains. null means nothing is loaded yet.
   const [visibleChains, setVisibleChains] = useState(null);
+
+  // Whether the temperature factor column holds pLDDT rather than a B-factor. Flips
+  // the meaning of the colouring, so it is derived once and passed to both the
+  // viewer and the legend.
+  const isPredicted = useMemo(() => looksLikePredictedModel(header), [header]);
   
   /**
    * showSecondaryStructure - Draw helices and strands as a tube cartoon
@@ -187,6 +192,7 @@ function App() {
               onColorSchemeChange={setColorScheme}
               visibleChains={visibleChains}
               onVisibleChainsChange={setVisibleChains}
+              isPredicted={isPredicted}
             />
           )}
         </aside>
@@ -200,6 +206,7 @@ function App() {
               showSecondaryStructure={showSecondaryStructure && hasSecondaryStructure}
               colorScheme={colorScheme}
               visibleChains={visibleChains}
+              isPredicted={isPredicted}
             />
           ) : (
             <div style={emptyStateStyle}>

@@ -206,21 +206,23 @@ function distanceBetween(a, b) {
  *
  * @param {Array<Object>} backboneAtoms - CA atoms from getBackboneAtoms()
  * @param {string} colorScheme - 'residue' or 'chain'
+ * @param {Object} options - Extra context passed to computeAtomColors()
  * @returns {Array<THREE.Mesh>}
  */
-export function createAtomSpheres(backboneAtoms, colorScheme = 'residue') {
+export function createAtomSpheres(backboneAtoms, colorScheme = 'residue', options = {}) {
   const spheres = [];
 
   // One radius for the whole structure, computed once rather than per atom.
   const radius = getResidueRadius(backboneAtoms);
 
-  backboneAtoms.forEach(atom => {
+  // Computed up front because some schemes need the whole structure in view.
+  const colors = computeAtomColors(backboneAtoms, colorScheme, options);
+
+  backboneAtoms.forEach((atom, index) => {
     // 16x16 segments keeps spheres smooth without hurting frame rate on large structures.
     const geometry = new THREE.SphereGeometry(radius, 16, 16);
 
-    const color = colorScheme === 'chain' 
-      ? getChainColor(atom.chain) 
-      : getResidueColor(atom.residue);
+    const color = colors[index];
     // MeshStandardMaterial takes the scene lighting, and that bright/shaded gradient
     // is what makes a sphere read as a ball instead of a flat circle.
     const material = new THREE.MeshStandardMaterial({
@@ -392,6 +394,218 @@ export const aminoAcidColors = {
 export function getResidueColor(residueName) {
   return aminoAcidColors[residueName] || aminoAcidColors['default'];
 }
+
+/**
+ * AlphaFold's confidence bands, with its published colours.
+ *
+ * Predicted models store the per-residue confidence score pLDDT in the
+ * temperature factor column. It is banded rather than continuous on purpose:
+ * the thresholds carry specific meaning, and below 50 a region is more likely
+ * to be genuinely disordered than to be a wrong prediction. A smooth ramp would
+ * hide exactly the boundary a reader needs to see.
+ */
+export const PLDDT_BANDS = [
+  { min: 90, color: 0x0053d6, label: 'Very high (pLDDT > 90)' },
+  { min: 70, color: 0x65cbf3, label: 'Confident (70-90)' },
+  { min: 50, color: 0xffdb13, label: 'Low (50-70)' },
+  { min: 0, color: 0xff7d45, label: 'Very low (< 50)' },
+];
+
+/**
+ * Gets the AlphaFold band colour for a pLDDT score.
+ *
+ * @param {number} plddt - Confidence score, 0-100
+ * @returns {number} - Hex color value
+ */
+export function getPlddtColor(plddt) {
+  // Absent rather than low: a residue with no score is not a residue predicted
+  // badly, and colouring it as very low would assert something about the model
+  if (!Number.isFinite(plddt)) return NO_VALUE_COLOR;
+  
+  const band = PLDDT_BANDS.find(b => plddt >= b.min);
+  return band ? band.color : PLDDT_BANDS[PLDDT_BANDS.length - 1].color;
+}
+
+/**
+ * Finds the range of temperature factors in a structure.
+ *
+ * The ramp is normalised to the structure's own range rather than an absolute
+ * scale because B-factors are not comparable between entries - a 1.0 A
+ * structure and a 3.5 A one occupy entirely different ranges.
+ *
+ * @param {Array<Object>} atoms - Atoms carrying a bFactor field
+ * @returns {{min: number, max: number}} - Observed range
+ */
+export function getBFactorRange(atoms) {
+  if (atoms.length === 0) return { min: 0, max: 0 };
+  
+  let min = Infinity;
+  let max = -Infinity;
+  for (const atom of atoms) {
+    // Truncated lines give null and malformed ones NaN. Number.isFinite rejects
+    // both; a null would otherwise coerce to 0 in the comparisons below and
+    // drag the low end of the ramp to zero
+    if (!Number.isFinite(atom.bFactor)) continue;
+    if (atom.bFactor < min) min = atom.bFactor;
+    if (atom.bFactor > max) max = atom.bFactor;
+  }
+  
+  // Every value was unusable
+  if (min === Infinity) return { min: 0, max: 0 };
+  
+  return { min, max };
+}
+
+/**
+ * Maps a temperature factor onto a blue-to-red ramp.
+ *
+ * Blue is low and red is high, matching the convention used across structural
+ * biology software: cool where the model is well determined, hot where it is
+ * uncertain or mobile.
+ *
+ * @param {number} bFactor - Temperature factor for this atom
+ * @param {number} min - Lowest value in the structure
+ * @param {number} max - Highest value in the structure
+ * @returns {number} - Hex color value
+ */
+export function getBFactorColor(bFactor, min, max) {
+  // An atom with no temperature factor must not be drawn at the blue end, which
+  // the legend calls well determined - absent data would masquerade as the most
+  // reliable in the structure. Grey reads as "no value" against the ramp
+  if (!Number.isFinite(bFactor)) return NO_VALUE_COLOR;
+  
+  // A structure with a single B-factor value has no gradient to show
+  const span = max - min;
+  const fraction = span > 0 ? (bFactor - min) / span : 0;
+  
+  // Hue 0.666 is blue and 0 is red, so invert the fraction to put low at blue
+  return new THREE.Color().setHSL((1 - clamp01(fraction)) * 0.666, 0.75, 0.55).getHex();
+}
+
+/**
+ * Shown for atoms carrying no value under a numeric colour scheme, so they read
+ * as unknown rather than as one end of the scale.
+ */
+export const NO_VALUE_COLOR = 0x808080;
+
+/**
+ * Maps a residue's position in its chain onto a blue-to-red ramp.
+ *
+ * This is the standard "rainbow" view: blue at the N terminus running to red at
+ * the C terminus. It is the quickest way to read a fold, because it shows the
+ * direction the chain travels and which parts of the structure are sequential
+ * neighbours - information a per-residue-type colouring throws away entirely.
+ *
+ * @param {number} index - Position of the residue within its chain
+ * @param {number} total - Number of residues in that chain
+ * @returns {number} - Hex color value
+ */
+export function getPositionColor(index, total) {
+  // A single-residue chain has no direction to convey
+  const fraction = total > 1 ? index / (total - 1) : 0;
+  return new THREE.Color().setHSL((1 - clamp01(fraction)) * 0.666, 0.8, 0.55).getHex();
+}
+
+/**
+ * Constrains a value to the 0-1 range that setHSL expects.
+ */
+function clamp01(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Detects a computationally predicted model.
+ *
+ * This matters because it changes what the temperature factor column means.
+ * In an experimental structure a high value marks an uncertain atom; in a
+ * predicted model the same column holds pLDDT, where high means confident -
+ * the exact opposite. Colouring one as though it were the other inverts the
+ * reading of the entire structure.
+ *
+ * @param {Object|null} header - Parsed header from parseHeader()
+ * @returns {boolean} - True when the file appears to be a predicted model
+ */
+export function looksLikePredictedModel(header) {
+  if (!header) return false;
+  
+  // Some predicted models do declare a method, and it says so: older PDB
+  // entries and several modelling tools write "THEORETICAL MODEL". No
+  // experimental EXPDTA value contains either word, and treating a non-empty
+  // method as proof of an experiment would send those down the B-factor ramp
+  // and invert their confidence scores
+  if (/THEORETICAL|PREDICT/i.test(header.method || '')) return true;
+  
+  // Otherwise a real experiment is identified by having a method or resolution
+  if (header.method || header.resolution !== null) return false;
+  
+  // AlphaFold DB and ESMFold announce themselves in the TITLE record instead
+  return /ALPHAFOLD|ESMFOLD|PREDICTION/i.test(header.title || '');
+}
+
+/**
+ * Computes a colour for every atom under the selected scheme.
+ *
+ * Colours are produced as one array aligned with the atoms rather than per
+ * sphere, because two of the schemes need whole-structure context: the
+ * temperature factor ramp needs the range across all atoms, and the rainbow
+ * needs each residue's position within its chain.
+ *
+ * @param {Array<Object>} atoms - Atoms to colour
+ * @param {string} colorScheme - 'residue', 'chain', 'bfactor' or 'rainbow'
+ * @param {Object} options - Extra context
+ * @param {boolean} options.isPredicted - Treat bFactor as pLDDT
+ * @returns {Array<number>} - Hex colors, one per atom, in the same order
+ */
+export function computeAtomColors(atoms, colorScheme = 'residue', options = {}) {
+  const { isPredicted = false } = options;
+  
+  if (colorScheme === 'chain') {
+    return atoms.map(atom => getChainColor(atom.chain));
+  }
+  
+  if (colorScheme === 'bfactor') {
+    if (isPredicted) return atoms.map(atom => getPlddtColor(atom.bFactor));
+    
+    const { min, max } = getBFactorRange(atoms);
+    return atoms.map(atom => getBFactorColor(atom.bFactor, min, max));
+  }
+  
+  if (colorScheme === 'rainbow') {
+    // Each chain runs its own full spectrum, so every chain reads N to C.
+    // Spreading one spectrum across a whole complex would instead encode chain
+    // order, which is an artefact of the file rather than anything structural
+    const chainLengths = new Map();
+    for (const atom of atoms) {
+      chainLengths.set(atom.chain, (chainLengths.get(atom.chain) || 0) + 1);
+    }
+    
+    const seen = new Map();
+    return atoms.map(atom => {
+      const index = seen.get(atom.chain) || 0;
+      seen.set(atom.chain, index + 1);
+      return getPositionColor(index, chainLengths.get(atom.chain));
+    });
+  }
+  
+  return atoms.map(atom => getResidueColor(atom.residue));
+}
+
+/**
+ * Colors for protein chains.
+ * 
+ * Generated rather than hardcoded: large complexes can have dozens of chains
+ * (PDB IDs run A-Z, then a-z, then 0-9), and any fixed palette runs out.
+ * 
+ * Why not Math.random()? Two reasons:
+ * 1. Colors would change on every reload, so a chain you are tracking visually
+ *    becomes a different color each time the file is loaded.
+ * 2. Random hues clump - with 20 chains drawn uniformly you are very likely to
+ *    get several near-duplicate pairs, which is the exact problem to avoid.
+ * 
+ * Instead the hue is derived deterministically from the chain ID. Multiplying by
+ * the golden ratio and taking the fractional part is a low-discrepancy sequence:
+ * it looks scattered, but sequential IDs (K, L, M...) land far apart on the hue
+ * circle and the values stay evenly distributed at any number of chains.
 
 /**
  * Chain colors are generated rather than hardcoded: large complexes run A-Z, then
