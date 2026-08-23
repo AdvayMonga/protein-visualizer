@@ -345,6 +345,9 @@ export function getBoundingRadius(atoms) {
  * that radius neighbouring residues intersect and the chain renders as one fused
  * sausage instead of a row of beads.
  *
+ * Exported so anything drawn alongside the spheres - a selection marker, a ligand -
+ * scales with them instead of re-deriving a size.
+ *
  * @param {Array<Object>} atoms
  * @returns {number} Radius in Angstroms
  */
@@ -356,7 +359,7 @@ const CA_SPACING = 3.8;
 // merging at exactly the point they touch.
 const MAX_RESIDUE_RADIUS = CA_SPACING * 0.37;
 
-function getResidueRadius(atoms) {
+export function getResidueRadius(atoms) {
   const scaled = Math.max(0.5, getMaxDimension(atoms) * 0.016);
   return Math.min(MAX_RESIDUE_RADIUS, scaled);
 }

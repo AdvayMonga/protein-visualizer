@@ -5,11 +5,17 @@
  * component that builds the actual Three.js geometry.
  */
 
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { createBackboneLine, createAtomSpheres, getMaxDimension, getBoundingRadius } from '../utils/proteinGeometry';
+import { createBackboneLine, createAtomSpheres, getMaxDimension, getBoundingRadius, getResidueRadius } from '../utils/proteinGeometry';
+import {
+  isClickNotDrag,
+  toNormalizedDeviceCoords,
+  firstAtomHit,
+  formatAtomLabel,
+} from '../utils/picking';
 
 /**
  * Releases the GPU memory held by an object and everything below it.
@@ -30,10 +36,9 @@ function disposeObject(object) {
  *
  * The geometry helpers return raw Three.js objects rather than R3F elements, so the
  * group is populated imperatively in an effect and rebuilt whenever the inputs change.
+ * The group ref is owned by ProteinViewer so the picker can raycast against it.
  */
-function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme }) {
-  const groupRef = useRef();
-
+function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, groupRef }) {
   useEffect(() => {
     if (!backboneAtoms || backboneAtoms.length === 0) return;
     if (!groupRef.current) return;
@@ -64,8 +69,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, showSecondaryStructur
     return () => {
       group.children.forEach(disposeObject);
     };
-  }, [backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme]);
-
+  }, [backboneAtoms, showBackbone, showAtoms, showSecondaryStructure, colorScheme, groupRef]);
 
   return <group ref={groupRef} />;
 }
@@ -98,12 +102,142 @@ function DepthFog({ radius }) {
   return <fog attach="fog" args={['#1a1a2e', 1, 1000]} />;
 }
 
-function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue' }) {
+/**
+ * Turns clicks on the canvas into atom selections. Renders nothing; it exists to hold
+ * the effect that owns the listeners.
+ *
+ * Raycasts manually rather than using R3F's onClick: the spheres are built
+ * imperatively with THREE.Mesh and never pass through React, so R3F cannot see them.
+ * One ray against the group also costs a single raycast per click instead of a React
+ * component per atom.
+ *
+ * @param {Object} props.groupRef - Ref to the group holding the atom spheres
+ * @param {Function} props.onSelect - Called with the picked atom, or null
+ */
+function AtomPicker({ groupRef, onSelect }) {
+  const { camera, gl, raycaster } = useThree();
+  
+  // Where the press started, so a release far away can be treated as a drag.
+  // Held in a ref rather than the effect closure so it survives the listeners
+  // being reattached: if that happened between a press and its release, the
+  // origin would reset to (0,0) and a drag ending near the top-left corner
+  // would measure as a click
+  const pressedAt = useRef({ x: 0, y: 0 });
+  
+  useEffect(() => {
+    const canvas = gl.domElement;
+    
+    const handlePointerDown = (event) => {
+      pressedAt.current = { x: event.clientX, y: event.clientY };
+    };
+    
+    const handlePointerUp = (event) => {
+      // Left button only. Orbit controls pan with the right button and dolly
+      // with the middle one, so without this a short right-click pan - or the
+      // click that opens the context menu - would change the selection
+      if (event.button !== 0) return;
+      
+      const releasedAt = { x: event.clientX, y: event.clientY };
+      
+      // Orbit controls rotate with the same button, so a drag must not select
+      if (!isClickNotDrag(pressedAt.current, releasedAt)) return;
+      if (!groupRef.current) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const pointer = toNormalizedDeviceCoords(event.clientX, event.clientY, rect);
+      
+      raycaster.setFromCamera(pointer, camera);
+      // Recursive, because the backbone may be a group of meshes
+      const hits = raycaster.intersectObjects(groupRef.current.children, true);
+      
+      // Clicking empty space clears the selection
+      onSelect(firstAtomHit(hits));
+    };
+    
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [camera, gl, raycaster, groupRef, onSelect]);
+  
+  return null;
+}
+
+/**
+ * SelectedAtomMarker Component (Internal)
+ * ---------------------------------------
+ * A wireframe cage around the selected atom.
+ *
+ * Declarative rather than imperative so React Three Fiber disposes it when the
+ * selection changes, which is also why it does not live in the imperative group.
+ *
+ * @param {Object} props - Component props
+ * @param {Object|null} props.atom - The selected atom, or null
+ * @param {number} props.radius - Marker radius, scaled to the atom spheres
+ */
+function SelectedAtomMarker({ atom, radius }) {
+  if (!atom) return null;
+  
+  return (
+    <mesh position={[atom.x, atom.y, atom.z]}>
+      <sphereGeometry args={[radius, 16, 16]} />
+      <meshBasicMaterial color={0xffffff} wireframe transparent opacity={0.7} />
+    </mesh>
+  );
+}
+
+/**
+ * ProteinViewer Component (Main Export)
+ * -------------------------------------
+ * The main component that sets up the 3D canvas and controls.
+ * 
+ * Responsibilities:
+ * 1. Create the WebGL canvas using R3F's <Canvas>
+ * 2. Set up camera with appropriate position and field of view
+ * 3. Add lighting so we can see the 3D objects
+ * 4. Include OrbitControls for mouse interaction
+ * 5. Render the Protein component with atom data
+ * 
+ * @param {Object} props - Component props
+ * @param {Array} props.backboneAtoms - Array of centered backbone CA atoms
+ * @param {Function} props.onAtomSelect - Optional callback with the picked atom
+ */
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', onAtomSelect }) {
+  // Owned here rather than inside Protein so the picker can raycast against it.
+  const groupRef = useRef();
+
+  const [selectedAtom, setSelectedAtom] = useState(null);
+  
+  // useCallback keeps the identity stable so the picker does not detach and
+  // reattach its listeners on every render
+  const handleSelect = useCallback((atom) => {
+    setSelectedAtom(atom);
+    if (onAtomSelect) onAtomSelect(atom);
+  }, [onAtomSelect]);
+  
+  // A new structure invalidates any previous selection. Routed through
+  // handleSelect rather than setSelectedAtom so a parent driving its own panel
+  // from onAtomSelect clears too, instead of showing an atom from the old file
+  useEffect(() => {
+    handleSelect(null);
+  }, [backboneAtoms, handleSelect]);
+
   // Pull the camera back proportionally to the protein so it fits the frame at any size.
   const cameraDistance = useMemo(() => {
     if (!backboneAtoms || backboneAtoms.length === 0) return 50;
     const maxDim = getMaxDimension(backboneAtoms);
     return Math.max(30, maxDim * 2);
+  }, [backboneAtoms]);
+
+  // Sized off the atom spheres so the marker reads as a cage around one at any
+  // structure size, rather than a fixed radius that swallows small proteins and
+  // vanishes inside large ones.
+  const markerRadius = useMemo(() => {
+    if (!backboneAtoms || backboneAtoms.length === 0) return 0.9;
+    return getResidueRadius(backboneAtoms) * 1.8;
   }, [backboneAtoms]);
 
   const boundingRadius = useMemo(() => {
@@ -117,6 +251,23 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
     backgroundColor: '#1a1a2e',
     borderRadius: '8px',
     overflow: 'hidden',
+    position: 'relative',  // Anchors the selection readout over the canvas.
+  };
+
+  // Sits over the canvas so the eye does not leave the structure to read what was
+  // clicked, as in established molecular viewers.
+  const readoutStyle = {
+    position: 'absolute',
+    top: '12px',
+    left: '12px',
+    padding: '8px 12px',
+    backgroundColor: 'rgba(26, 26, 46, 0.85)',
+    border: '1px solid #4a4a6a',
+    borderRadius: '4px',
+    color: '#e8e8f0',
+    fontSize: '13px',
+    fontFamily: 'monospace',
+    pointerEvents: 'none',  // Never intercept clicks meant for the structure.
   };
 
   return (
@@ -148,8 +299,13 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
             showAtoms={showAtoms}
             showSecondaryStructure={showSecondaryStructure}
             colorScheme={colorScheme}
+            groupRef={groupRef}
           />
         )}
+
+        {/* Click-to-identify, and the marker showing what is selected. */}
+        <AtomPicker groupRef={groupRef} onSelect={handleSelect} />
+        <SelectedAtomMarker atom={selectedAtom} radius={markerRadius} />
 
         {/* Left-drag rotates, right-drag pans, scroll zooms. */}
         <OrbitControls 
@@ -159,6 +315,16 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
           maxDistance={500}
         />
       </Canvas>
+      
+      {/* Selection readout, shown only when an atom is selected */}
+      {selectedAtom && (
+        <div style={readoutStyle}>
+          <div style={{ fontWeight: 'bold' }}>{formatAtomLabel(selectedAtom)}</div>
+          <div style={{ opacity: 0.75, fontSize: '11px', marginTop: '2px' }}>
+            atom {selectedAtom.name} · serial {selectedAtom.serial}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
