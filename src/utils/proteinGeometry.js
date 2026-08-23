@@ -8,37 +8,104 @@
 import * as THREE from 'three';
 
 /**
- * Builds a smooth tube through the backbone atoms in sequence, tracing the fold.
+ * Builds a smooth tube through the backbone atoms, broken wherever the chain is not
+ * actually continuous.
  *
  * @param {Array<Object>} backboneAtoms - CA atoms from getBackboneAtoms()
- * @returns {THREE.Mesh|THREE.Group} Tube mesh, or an empty group if there is nothing to sweep
+ * @returns {THREE.Group} Group of tube meshes, one per connected segment
  */
 export function createBackboneLine(backboneAtoms) {
-  const points = backboneAtoms.map(atom => 
-    new THREE.Vector3(atom.x, atom.y, atom.z)
-  );
-
-  if (points.length < 2) return new THREE.Group();
-
-  // Catmull-Rom fits a curve through the CA positions so the trace reads as a
-  // continuous ribbon rather than kinked segments.
-  const curve = new THREE.CatmullRomCurve3(points);
-
-  // 4 tubular segments per residue keeps the curve smooth without exploding the
-  // vertex count. Radius is a fraction of the residue radius, so the trace stays
-  // thinner than the spheres it threads through but never drops below a pixel.
-  const radius = getResidueRadius(backboneAtoms) * BACKBONE_RADIUS_RATIO;
-  const geometry = new THREE.TubeGeometry(curve, points.length * 4, radius, 8, false);
-
   // Neutral slate: the trace only needs to show connectivity, so the color budget
-  // goes to the residue/chain spheres.
+  // goes to the residue/chain spheres. Shared by every segment, since a large
+  // structure can break into hundreds of them.
   const material = new THREE.MeshStandardMaterial({
     color: 0x8a9bb0,
     roughness: 0.6,
     metalness: 0.0
   });
 
-  return new THREE.Mesh(geometry, material);
+  // Computed from the whole structure rather than per segment, so every segment is
+  // drawn at the same thickness.
+  const radius = getResidueRadius(backboneAtoms) * BACKBONE_RADIUS_RATIO;
+
+  const group = new THREE.Group();
+
+  for (const segment of splitIntoSegments(backboneAtoms)) {
+    // A lone residue has no neighbour to connect to; its atom sphere still shows it.
+    if (segment.length < 2) continue;
+
+    const points = segment.map(atom => new THREE.Vector3(atom.x, atom.y, atom.z));
+
+    // Catmull-Rom fits a curve through the CA positions so the trace reads as a
+    // continuous ribbon rather than kinked segments.
+    const curve = new THREE.CatmullRomCurve3(points);
+
+    // 4 tubular segments per residue keeps the curve smooth without exploding the
+    // vertex count.
+    const geometry = new THREE.TubeGeometry(curve, points.length * 4, radius, 8, false);
+
+    group.add(new THREE.Mesh(geometry, material));
+  }
+
+  return group;
+}
+
+/**
+ * Longest plausible distance between consecutive alpha carbons, in Angstroms.
+ *
+ * Peptide bond geometry fixes real CA-CA spacing near 3.8A, dropping to about 2.9A
+ * for a cis bond. 4.5A clears coordinate error without admitting real gaps.
+ */
+export const MAX_CA_GAP = 4.5;
+
+/**
+ * Splits backbone atoms into runs of genuinely connected residues.
+ *
+ * One curve through every CA in file order asserts connectivity that does not exist:
+ * it joins the last residue of one chain to the first of the next, and it cuts
+ * straight through regions where residues are missing. The second case is the
+ * misleading one - a disordered loop is simply absent, so the curve spans the hole as
+ * a long straight rod, and a straight rod is what a genuine extended segment looks
+ * like.
+ *
+ * Deliberately not also breaking on a jump in residue numbering: legacy schemes skip
+ * numbers by design (trypsin is numbered against chymotrypsinogen), so 3PTB's one
+ * continuous chain would fragment into seven pieces. Distance is the physical test.
+ *
+ * @param {Array<Object>} backboneAtoms - CA atoms in file order
+ * @param {number} maxGap - Distance above which residues are not connected
+ * @returns {Array<Array<Object>>} Runs of consecutive connected residues
+ */
+export function splitIntoSegments(backboneAtoms, maxGap = MAX_CA_GAP) {
+  const segments = [];
+  let current = [];
+
+  for (let i = 0; i < backboneAtoms.length; i++) {
+    const atom = backboneAtoms[i];
+
+    if (i > 0) {
+      const previous = backboneAtoms[i - 1];
+      const differentChain = atom.chain !== previous.chain;
+      const tooFar = distanceBetween(previous, atom) > maxGap;
+
+      if (differentChain || tooFar) {
+        segments.push(current);
+        current = [];
+      }
+    }
+
+    current.push(atom);
+  }
+
+  // The final run has no following break to flush it.
+  if (current.length > 0) segments.push(current);
+
+  return segments;
+}
+
+/** Straight-line distance between two atoms, in Angstroms. */
+function distanceBetween(a, b) {
+  return Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
 }
 
 /**

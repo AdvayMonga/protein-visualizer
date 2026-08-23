@@ -12,6 +12,20 @@ import * as THREE from 'three';
 import { createBackboneLine, createAtomSpheres, getMaxDimension, getBoundingRadius } from '../utils/proteinGeometry';
 
 /**
+ * Releases the GPU memory held by an object and everything below it.
+ *
+ * traverse() rather than a direct property check: the backbone is a Group of
+ * per-segment meshes, and a Group has no geometry or material of its own, so checking
+ * only the top-level object would silently leak every tube inside it.
+ */
+function disposeObject(object) {
+  object.traverse(node => {
+    if (node.geometry) node.geometry.dispose();
+    if (node.material) node.material.dispose();
+  });
+}
+
+/**
  * Builds the protein geometry into a THREE.Group.
  *
  * The geometry helpers return raw Three.js objects rather than R3F elements, so the
@@ -24,12 +38,15 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
     if (!backboneAtoms || backboneAtoms.length === 0) return;
     if (!groupRef.current) return;
 
+    // Captured for the cleanup below: React nulls the ref before passive effect
+    // cleanups run on unmount, so reading it there would free nothing.
+    const group = groupRef.current;
+
     // Drop the previous structure and free its GPU resources before rebuilding.
     while (groupRef.current.children.length > 0) {
       const child = groupRef.current.children[0];
       groupRef.current.remove(child);
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
+      disposeObject(child);
     }
 
     if (showBackbone) {
@@ -45,12 +62,7 @@ function Protein({ backboneAtoms, showBackbone, showAtoms, colorScheme }) {
     console.log(`Rendered protein: ${backboneAtoms.length} residues, showBackbone=${showBackbone}, showAtoms=${showAtoms}, colorScheme=${colorScheme}`);
 
     return () => {
-      if (groupRef.current) {
-        groupRef.current.children.forEach(child => {
-          if (child.geometry) child.geometry.dispose();
-          if (child.material) child.material.dispose();
-        });
-      }
+      group.children.forEach(disposeObject);
     };
   }, [backboneAtoms, showBackbone, showAtoms, colorScheme]);
 
