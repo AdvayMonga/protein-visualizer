@@ -17,6 +17,18 @@ import { parsePDB, parseHeader, getBackboneAtoms, getProteinInfo } from './utils
 import { centerProtein } from './utils/proteinGeometry';
 import { parseSecondaryStructure, assignSecondaryStructure } from './utils/secondaryStructure';
 
+/**
+ * Chain IDs that actually have a backbone to draw.
+ *
+ * @param {Object} info - Result of getProteinInfo()
+ * @returns {Array<string>} Chains with at least one observed residue
+ */
+function polymerChains(info) {
+  return (info.chainDetails || [])
+    .filter(chain => chain.observedResidues > 0)
+    .map(chain => chain.chain);
+}
+
 function App() {
   // Centered CA atoms for visualization; null until a file is loaded.
   const [backboneAtoms, setBackboneAtoms] = useState(null);
@@ -26,6 +38,9 @@ function App() {
   const [header, setHeader] = useState(null);
   const [showBackbone, setShowBackbone] = useState(true);
   const [showAtoms, setShowAtoms] = useState(true);
+  // A Set so membership checks stay constant time; complexes have dozens of
+  // chains. null means nothing is loaded yet.
+  const [visibleChains, setVisibleChains] = useState(null);
   
   /**
    * showSecondaryStructure - Draw helices and strands as a tube cartoon
@@ -71,7 +86,10 @@ function App() {
     setHeader(structureHeader);
     // Older entries and predicted models often omit these records entirely.
     setHasSecondaryStructure(ssRanges.length > 0);
-
+    // Every chain starts visible. Taken from chainDetails rather than info.chains,
+    // which counts every chain in the file including ones holding only water or
+    // ligands - those have no backbone, so a checkbox for them would do nothing.
+    setVisibleChains(new Set(polymerChains(info)));
 
     console.log('=== Processing Complete ===');
   };
@@ -167,6 +185,8 @@ function App() {
               hasSecondaryStructure={hasSecondaryStructure}
               colorScheme={colorScheme}
               onColorSchemeChange={setColorScheme}
+              visibleChains={visibleChains}
+              onVisibleChainsChange={setVisibleChains}
             />
           )}
         </aside>
@@ -179,6 +199,7 @@ function App() {
               showAtoms={showAtoms}
               showSecondaryStructure={showSecondaryStructure && hasSecondaryStructure}
               colorScheme={colorScheme}
+              visibleChains={visibleChains}
             />
           ) : (
             <div style={emptyStateStyle}>

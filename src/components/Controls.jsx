@@ -1,11 +1,21 @@
 /** Sidebar panel showing protein statistics and the display toggles. */
 
 import React from 'react';
+import { getChainColor } from '../utils/proteinGeometry';
+
+/**
+ * Converts a Three.js hex color number into a CSS color string.
+ */
+function toCssColor(hex) {
+  return `#${hex.toString(16).padStart(6, '0')}`;
+}
 
 /**
  * @param {boolean} props.showSecondaryStructure - Whether the cartoon is drawn
  * @param {Function} props.onShowSecondaryStructureChange - Callback for that toggle
  * @param {boolean} props.hasSecondaryStructure - Whether the file declared any
+ * @param {Set<string>} props.visibleChains - Chains currently drawn
+ * @param {Function} props.onVisibleChainsChange - Callback with the new visible set
  */
 function Controls({ 
   proteinInfo, 
@@ -17,8 +27,40 @@ function Controls({
   onColorSchemeChange,
   showSecondaryStructure = false,
   onShowSecondaryStructureChange,
-  hasSecondaryStructure = false
+  hasSecondaryStructure = false,
+  visibleChains = null,
+  onVisibleChainsChange
 }) {
+  // proteinInfo.chains counts every chain in the file, including ones holding only
+  // water or ligands.
+  const chains = proteinInfo
+    ? (proteinInfo.chainDetails || [])
+        .filter(chain => chain.observedResidues > 0)
+        .map(chain => chain.chain)
+    : [];
+  
+  /** Toggles one chain without disturbing the others. */
+  const toggleChain = (chain) => {
+    if (!onVisibleChainsChange || !visibleChains) return;
+    const next = new Set(visibleChains);
+    if (next.has(chain)) {
+      next.delete(chain);
+    } else {
+      next.add(chain);
+    }
+    onVisibleChainsChange(next);
+  };
+  
+  /** Isolating one chain is the common case when reading a large complex. */
+  const isolateChain = (chain) => {
+    if (!onVisibleChainsChange) return;
+    onVisibleChainsChange(new Set([chain]));
+  };
+  
+  const showAllChains = () => {
+    if (!onVisibleChainsChange) return;
+    onVisibleChainsChange(new Set(chains));
+  };
   const panelStyle = {
     padding: '15px',
     backgroundColor: '#f8f9fa',
@@ -76,6 +118,50 @@ function Controls({
     cursor: 'pointer',
   };
 
+  const buttonStyle = {
+    padding: '2px 8px',
+    fontSize: '12px',
+    borderRadius: '4px',
+    border: '1px solid #dee2e6',
+    backgroundColor: 'white',
+    color: '#333',
+    cursor: 'pointer',
+  };
+  
+  const linkButtonStyle = {
+    padding: '0 4px',
+    fontSize: '11px',
+    border: 'none',
+    background: 'none',
+    color: '#0066cc',
+    cursor: 'pointer',
+  };
+  
+  // Large complexes can have dozens of chains, so the list scrolls
+  const chainListStyle = {
+    maxHeight: '180px',
+    overflowY: 'auto',
+    border: '1px solid #dee2e6',
+    borderRadius: '4px',
+    padding: '6px',
+    backgroundColor: 'white',
+  };
+  
+  const chainRowStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+  };
+  
+  const swatchStyle = {
+    display: 'inline-block',
+    width: '10px',
+    height: '10px',
+    borderRadius: '2px',
+    marginLeft: '8px',
+    flexShrink: 0,
+  };
+  
   const selectLabelStyle = {
     fontSize: '14px',
     color: '#333',
@@ -104,6 +190,45 @@ function Controls({
         </div>
       )}
       
+      {/* Only worth showing for multi-chain structures - a single-chain protein has
+          nothing to isolate against. */}
+      {chains.length > 1 && visibleChains && (
+        <div style={{ marginBottom: '15px' }}>
+          <div style={{ ...statStyle, alignItems: 'center' }}>
+            <span style={{ ...labelStyle, fontWeight: 'bold' }}>
+              Chains ({visibleChains.size}/{chains.length})
+            </span>
+            <button style={buttonStyle} onClick={showAllChains}>
+              Show all
+            </button>
+          </div>
+
+          <div style={chainListStyle}>
+            {chains.map(chain => (
+              <div key={chain} style={chainRowStyle}>
+                <label style={{ ...checkboxContainerStyle, marginBottom: 0, flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={visibleChains.has(chain)}
+                    onChange={() => toggleChain(chain)}
+                  />
+                  {/* Doubles as a legend, but only when it matches the view. */}
+                  {colorScheme === 'chain' && (
+                    <span
+                      style={{ ...swatchStyle, backgroundColor: toCssColor(getChainColor(chain)) }}
+                    />
+                  )}
+                  <span style={checkboxLabelStyle}>Chain {chain}</span>
+                </label>
+                <button style={linkButtonStyle} onClick={() => isolateChain(chain)}>
+                  only
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <h3 style={headerStyle}>Display Options</h3>
       
       <label style={checkboxContainerStyle}>

@@ -126,6 +126,25 @@ export function getAtomsByChain(atoms, chainId) {
 }
 
 /**
+ * Filters atoms down to a set of chains.
+ *
+ * Hiding chains is the main tool for reading a multi-chain structure: what is
+ * deposited is the crystal's asymmetric unit, which may hold several copies of a
+ * molecule that is functionally a monomer, and in a large complex chains simply
+ * occlude each other. Subtracting chains is how those are told apart.
+ *
+ * @param {Array<Object>} atoms
+ * @param {Set<string>|Array<string>} chainIds - Chains to keep
+ * @returns {Array<Object>} Atoms belonging to any of the given chains
+ */
+export function getAtomsByChains(atoms, chainIds) {
+  // Set lookup keeps this linear; a large complex has enough chains that
+  // Array.includes() per atom becomes a visible cost.
+  const wanted = chainIds instanceof Set ? chainIds : new Set(chainIds);
+  return atoms.filter(atom => wanted.has(atom.chain));
+}
+
+/**
  * Summary statistics for the info panel.
  *
  * @param {Array<Object>} atoms

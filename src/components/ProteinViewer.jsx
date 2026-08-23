@@ -10,6 +10,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { createBackboneLine, createAtomSpheres, getMaxDimension, getBoundingRadius, getResidueRadius } from '../utils/proteinGeometry';
+import { getAtomsByChains } from '../utils/pdbParser';
 import {
   isClickNotDrag,
   toNormalizedDeviceCoords,
@@ -204,8 +205,9 @@ function SelectedAtomMarker({ atom, radius }) {
  * @param {Object} props - Component props
  * @param {Array} props.backboneAtoms - Array of centered backbone CA atoms
  * @param {Function} props.onAtomSelect - Optional callback with the picked atom
+ * @param {Set<string>|null} props.visibleChains - Chains to draw, or null for all
  */
-function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', onAtomSelect }) {
+function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, showSecondaryStructure = false, colorScheme = 'residue', visibleChains = null, onAtomSelect }) {
   // Owned here rather than inside Protein so the picker can raycast against it.
   const groupRef = useRef();
 
@@ -225,7 +227,9 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
     handleSelect(null);
   }, [backboneAtoms, handleSelect]);
 
-  // Pull the camera back proportionally to the protein so it fits the frame at any size.
+  // Pull the camera back proportionally to the protein so it fits the frame at any
+  // size. Based on the full structure, not the visible subset, so the camera does
+  // not jump when a chain is toggled.
   const cameraDistance = useMemo(() => {
     if (!backboneAtoms || backboneAtoms.length === 0) return 50;
     const maxDim = getMaxDimension(backboneAtoms);
@@ -240,10 +244,22 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
     return getResidueRadius(backboneAtoms) * 1.8;
   }, [backboneAtoms]);
 
+
+  // Derived from the full structure, not the visible subset, so hiding a chain does
+  // not pull the fog in around what is left.
   const boundingRadius = useMemo(() => {
     if (!backboneAtoms || backboneAtoms.length === 0) return 25;
     return getBoundingRadius(backboneAtoms);
   }, [backboneAtoms]);
+
+  // Filtering happens after centering, so hiding a chain leaves the remaining
+  // chains where they were instead of re-centering them.
+  const visibleAtoms = useMemo(() => {
+    if (!backboneAtoms) return backboneAtoms;
+    // null means "no filter applied", which differs from an empty set.
+    if (visibleChains === null) return backboneAtoms;
+    return getAtomsByChains(backboneAtoms, visibleChains);
+  }, [backboneAtoms, visibleChains]);
 
   const containerStyle = {
     width: '100%',
@@ -251,7 +267,7 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
     backgroundColor: '#1a1a2e',
     borderRadius: '8px',
     overflow: 'hidden',
-    position: 'relative',  // Anchors the selection readout over the canvas.
+    position: 'relative',  // Anchors the readout and notice over the canvas.
   };
 
   // Sits over the canvas so the eye does not leave the structure to read what was
@@ -269,6 +285,17 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
     fontFamily: 'monospace',
     pointerEvents: 'none',  // Never intercept clicks meant for the structure.
   };
+
+  // Hiding every chain leaves a blank dark box indistinguishable from a crash.
+  const noticeStyle = {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    color: '#8a8aa0',
+    fontSize: '14px',
+    textAlign: 'center',
+    pointerEvents: 'none',  };
 
   return (
     <div style={containerStyle}>
@@ -292,9 +319,9 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
         <directionalLight position={[5, 8, 10]} intensity={2} />
         <directionalLight position={[-6, -4, -8]} intensity={0.7} />
 
-        {backboneAtoms && backboneAtoms.length > 0 && (
+        {visibleAtoms && visibleAtoms.length > 0 && (
           <Protein 
-            backboneAtoms={backboneAtoms}
+            backboneAtoms={visibleAtoms}
             showBackbone={showBackbone}
             showAtoms={showAtoms}
             showSecondaryStructure={showSecondaryStructure}
@@ -323,6 +350,12 @@ function ProteinViewer({ backboneAtoms, showBackbone = true, showAtoms = true, s
           <div style={{ opacity: 0.75, fontSize: '11px', marginTop: '2px' }}>
             atom {selectedAtom.name} · serial {selectedAtom.serial}
           </div>
+        </div>
+      )}
+
+      {backboneAtoms && backboneAtoms.length > 0 && visibleAtoms.length === 0 && (
+        <div style={noticeStyle}>
+          No chains shown — select at least one chain
         </div>
       )}
     </div>
