@@ -117,7 +117,14 @@ function App() {
     setHasWater(hetero.some(atom => isWater(atom.residue)));
     setHeader(structureHeader);
     // Older entries and predicted models often omit these records entirely.
-    setHasSecondaryStructure(ssRanges.length > 0);
+    const hasSS = ssRanges.length > 0;
+    setHasSecondaryStructure(hasSS);
+    // Per-residue spheres and the cartoon are alternative representations, not
+    // layers: a sphere is drawn at the full residue radius while the cartoon sizes
+    // its tubes at a fraction of it, so every sphere is wider than the tube running
+    // through it and the cartoon ends up buried inside a string of beads. Whichever
+    // representation is going to render, start with only that one showing.
+    setShowAtoms(!(showSecondaryStructure && hasSS));
     // Every chain starts visible. Taken from chainDetails rather than info.chains,
     // which counts every chain in the file including ones holding only water or
     // ligands - those have no backbone, so a checkbox for them would do nothing.
