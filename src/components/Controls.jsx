@@ -1,34 +1,7 @@
-/**
- * Controls Component
- * ==================
- * 
- * A UI panel that provides controls for the protein visualization.
- * This component allows users to customize how the protein is displayed.
- * 
- * Features:
- * - Display statistics about the loaded protein
- * - Toggle visibility of backbone line and atom spheres
- * - (Future) Color scheme selection
- * - (Future) Representation style selection
- * 
- * This component demonstrates React state management for UI controls
- * and how to pass user preferences to visualization components.
- */
+/** Sidebar panel showing protein statistics and the display toggles. */
 
 import React from 'react';
 
-/**
- * Controls - A panel for visualization settings
- * 
- * @param {Object} props - Component props
- * @param {Object} props.proteinInfo - Information about the loaded protein
- * @param {boolean} props.showBackbone - Whether to show backbone line
- * @param {Function} props.onShowBackboneChange - Callback when backbone toggle changes
- * @param {boolean} props.showAtoms - Whether to show atom spheres
- * @param {Function} props.onShowAtomsChange - Callback when atoms toggle changes
- * @param {string} props.colorScheme - Current color scheme ('residue' or 'chain')
- * @param {Function} props.onColorSchemeChange - Callback when color scheme changes
- */
 function Controls({ 
   proteinInfo, 
   showBackbone = true, 
@@ -38,7 +11,6 @@ function Controls({
   colorScheme = 'residue',
   onColorSchemeChange
 }) {
-  // Styles for the control panel
   const panelStyle = {
     padding: '15px',
     backgroundColor: '#f8f9fa',
@@ -107,7 +79,6 @@ function Controls({
     <div style={panelStyle}>
       <h3 style={headerStyle}>Protein Information</h3>
       
-      {/* Display protein statistics if available */}
       {proteinInfo && (
         <div style={{ marginBottom: '15px' }}>
           <div style={statStyle}>
@@ -125,10 +96,8 @@ function Controls({
         </div>
       )}
       
-      {/* Display controls section */}
       <h3 style={headerStyle}>Display Options</h3>
       
-      {/* Backbone toggle */}
       <label style={checkboxContainerStyle}>
         <input 
           type="checkbox"
@@ -138,7 +107,6 @@ function Controls({
         <span style={checkboxLabelStyle}>Show Backbone Line</span>
       </label>
       
-      {/* Atoms toggle */}
       <label style={checkboxContainerStyle}>
         <input 
           type="checkbox"
@@ -148,7 +116,6 @@ function Controls({
         <span style={checkboxLabelStyle}>Show Atom Spheres</span>
       </label>
 
-      {/* Color scheme selector */}
       <div style={{ marginTop: '15px' }}>
         <label style={selectLabelStyle}>Color Scheme:</label>
         <select 
@@ -166,7 +133,6 @@ function Controls({
         </p>
       </div>
 
-      {/* Instructions */}
       <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#e9ecef', borderRadius: '4px' }}>
         <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
           <strong>Controls:</strong><br />
