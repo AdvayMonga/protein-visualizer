@@ -230,6 +230,11 @@ function Controls({
             <span style={labelStyle}>Chains:</span>
             <span style={valueStyle}>{proteinInfo.chains.join(', ')}</span>
           </div>
+          {/* Which of the interchangeable RCSB encodings this file used */}
+          <div style={statStyle}>
+            <span style={labelStyle}>Format:</span>
+            <span style={valueStyle}>{proteinInfo.format}</span>
+          </div>
         </div>
       )}
       

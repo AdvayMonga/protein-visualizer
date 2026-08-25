@@ -83,19 +83,19 @@ function addSecondaryStructureRuns(group, segment, residueRadius) {
   
   runs.forEach((run, index) => {
     const points = [...run.atoms];
-    
+
     // Carry the first residue of the next run into this one so consecutive
     // tubes meet. Without the overlap each change of secondary structure would
     // leave a visible break in the trace
     const next = runs[index + 1];
     if (next) points.push(next.atoms[0]);
-    
+
     const material = new THREE.MeshStandardMaterial({
       color: SS_COLORS[run.type] ?? SS_COLORS[COIL],
       roughness: 0.5,
       metalness: 0.0,
     });
-    
+
     const ratio = SS_RADIUS_RATIOS[run.type] ?? SS_RADIUS_RATIOS[COIL];
     const radius = residueRadius * ratio;
     addTube(group, points, radius, material);
@@ -180,9 +180,15 @@ export function splitIntoSegments(backboneAtoms, maxGap = MAX_CA_GAP) {
     if (i > 0) {
       const previous = backboneAtoms[i - 1];
       const differentChain = atom.chain !== previous.chain;
+      // Biological assembly files write each copy of a subunit as its own MODEL
+      // and reuse the same chain letters, so chain alone does not separate them.
+      // The distance test usually catches it too, since copies are moved apart -
+      // but only usually, and two copies meeting near their junction would be
+      // joined into one impossible chain.
+      const differentModel = atom.model !== previous.model;
       const tooFar = distanceBetween(previous, atom) > maxGap;
 
-      if (differentChain || tooFar) {
+      if (differentChain || differentModel || tooFar) {
         segments.push(current);
         current = [];
       }
@@ -219,20 +225,33 @@ export function createAtomSpheres(backboneAtoms, colorScheme = 'residue', option
   // Computed up front because some schemes need the whole structure in view.
   const colors = computeAtomColors(backboneAtoms, colorScheme, options);
 
+  // 16x16 segments keeps spheres smooth without hurting frame rate on large structures.
+  // Built once and shared: every sphere is the same size, so a copy per residue would
+  // upload the same ~290 vertices thousands of times over. mmCIF opens structures with
+  // tens of thousands of residues, where that is the difference between a load and a
+  // stall.
+  const geometry = new THREE.SphereGeometry(radius, 16, 16);
+
+  // Materials are shared per color for the same reason - there are at most a few dozen
+  // distinct colors, against one material per residue before.
+  const materials = new Map();
+  const materialFor = (color) => {
+    let material = materials.get(color);
+    if (!material) {
+      // MeshStandardMaterial takes the scene lighting, and that bright/shaded gradient
+      // is what makes a sphere read as a ball instead of a flat circle.
+      material = new THREE.MeshStandardMaterial({
+        color: color,
+        roughness: 0.35,
+        metalness: 0.05
+      });
+      materials.set(color, material);
+    }
+    return material;
+  };
+
   backboneAtoms.forEach((atom, index) => {
-    // 16x16 segments keeps spheres smooth without hurting frame rate on large structures.
-    const geometry = new THREE.SphereGeometry(radius, 16, 16);
-
-    const color = colors[index];
-    // MeshStandardMaterial takes the scene lighting, and that bright/shaded gradient
-    // is what makes a sphere read as a ball instead of a flat circle.
-    const material = new THREE.MeshStandardMaterial({
-      color: color,
-      roughness: 0.35,
-      metalness: 0.05
-    });
-
-    const sphere = new THREE.Mesh(geometry, material);
+    const sphere = new THREE.Mesh(geometry, materialFor(colors[index]));
     sphere.position.set(atom.x, atom.y, atom.z);
 
     // Carried along for future picking / hover interactions.
@@ -746,7 +765,17 @@ export function getChainColor(chain) {
   // Some PDB files leave the chain column blank - nothing to derive a hue from.
   if (!chain) return 0x95a5a6;
 
-  const code = chain.charCodeAt(0);
+  // Hash the whole identifier, not just its first character. Legacy PDB chains are
+  // single letters, but mmCIF uses multi-character IDs on exactly the large
+  // complexes this palette exists for (AA, AB, ...), and assembly files suffix
+  // copies as A-2, A-3. Keying on the first character alone would paint every one
+  // of those the same color. Single-character IDs hash to their own char code, so
+  // the colors they already had do not move.
+  let code = 0;
+  for (let i = 0; i < chain.length; i++) {
+    code = (code * 31 + chain.charCodeAt(i)) >>> 0;
+  }
+
   return new THREE.Color()
     .setHSL(
       (code * HUE_STEP) % 1,

@@ -1,8 +1,8 @@
 /**
  * Root component. Owns all app state and wires FileUpload, Controls, and ProteinViewer together.
  *
- * Flow: FileUpload hands up raw PDB text -> parse -> extract CA backbone -> center at origin
- * -> ProteinViewer renders it.
+ * Flow: FileUpload decompresses, detects the format and parses it -> hands up atoms
+ * -> extract CA backbone -> center at origin -> ProteinViewer renders it.
  */
 
 import React, { useState, useMemo } from 'react';
@@ -13,7 +13,7 @@ import ProteinViewer from './components/ProteinViewer';
 import Controls from './components/Controls';
 import StructureInfo from './components/StructureInfo';
 
-import { parsePDB, parseHeader, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
+import { parseHeader, getBackboneAtoms, getProteinInfo } from './utils/pdbParser';
 import { getCentroid, translateAtoms, looksLikePredictedModel } from './utils/proteinGeometry';
 import { parseSecondaryStructure, assignSecondaryStructure } from './utils/secondaryStructure';
 import { getLigandAtoms, getLigandSummary, isWater } from './utils/ligands';
@@ -33,7 +33,7 @@ function polymerChains(info) {
 function App() {
   // Centered CA atoms for visualization; null until a file is loaded.
   const [backboneAtoms, setBackboneAtoms] = useState(null);
-  // Stats for the info panel: totalAtoms, residueCount, chainCount, chains.
+  // Stats for the info panel: totalAtoms, residueCount, chainCount, chains, format.
   const [proteinInfo, setProteinInfo] = useState(null);
   // Header metadata: idCode, title, method, resolution, rValue, rFree, seqres, modelCount.
   const [header, setHeader] = useState(null);
@@ -68,16 +68,22 @@ function App() {
   const [hasSecondaryStructure, setHasSecondaryStructure] = useState(false);
   const [colorScheme, setColorScheme] = useState('residue');
 
-  /** Parses uploaded PDB text and loads the centered backbone into state. */
-  const handleFileLoaded = (pdbText) => {
-    console.log('=== Processing PDB File ===');
-
-    const allAtoms = parsePDB(pdbText);
+  /**
+   * Loads an already-parsed structure into state.
+   *
+   * The file arrives decompressed, format-detected and parsed by loadStructure(), so
+   * every supported format reaches here as the same atoms. `pdbText` is the raw text
+   * when the file was legacy PDB, and null for mmCIF and BinaryCIF.
+   */
+  const handleFileLoaded = ({ atoms: allAtoms, formatLabel, pdbText }) => {
+    console.log(`=== Processing ${formatLabel} File ===`);
     console.log(`Parsed ${allAtoms.length} total atoms`);
 
     // Read separately from the coordinates because it answers a different
     // question: not where the atoms are, but how much to trust them.
-    const structureHeader = parseHeader(pdbText);
+    // HEADER, EXPDTA and SEQRES are legacy PDB records with no equivalent here for
+    // mmCIF yet, so those files load without provenance rather than not at all.
+    const structureHeader = pdbText ? parseHeader(pdbText) : null;
     console.log('Structure header:', structureHeader);
 
     let backbone = getBackboneAtoms(allAtoms);
@@ -85,7 +91,8 @@ function App() {
 
     // From the file's own HELIX and SHEET records rather than recomputed: deriving
     // it geometrically needs backbone N, C and O atoms a CA trace does not carry.
-    const ssRanges = parseSecondaryStructure(pdbText);
+    // Same limitation as the header - mmCIF keeps this in _struct_conf, unread.
+    const ssRanges = pdbText ? parseSecondaryStructure(pdbText) : [];
     console.log(`Found ${ssRanges.length} secondary structure ranges`);
     backbone = assignSecondaryStructure(backbone, ssRanges);
 
@@ -105,7 +112,7 @@ function App() {
 
     // Header passed in so observed residues can be compared against SEQRES,
     // which is what reveals unresolved regions.
-    const info = getProteinInfo(allAtoms, structureHeader);
+    const info = { ...getProteinInfo(allAtoms, structureHeader), format: formatLabel };
     console.log('Protein info:', info);
 
     setBackboneAtoms(backbone);
