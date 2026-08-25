@@ -30,6 +30,9 @@ function disposeObject(object) {
   object.traverse(node => {
     if (node.geometry) node.geometry.dispose();
     if (node.material) node.material.dispose();
+    // An instanced mesh also owns per-instance matrix and color buffers, which its
+    // own dispose() releases and geometry/material disposal does not.
+    if (node.isInstancedMesh) node.dispose();
   });
 }
 
@@ -72,8 +75,9 @@ function Protein({ backboneAtoms, heteroAtoms, showBackbone, showAtoms, showLiga
     
     // Create and add atom spheres only if showAtoms is true
     if (showAtoms && hasBackbone) {
+      // One instanced mesh holds every residue, so there is a single object to add.
       const spheres = createAtomSpheres(backboneAtoms, colorScheme, { isPredicted });
-      spheres.forEach(sphere => groupRef.current.add(sphere));
+      groupRef.current.add(spheres);
     }
     
     // Ligands and water come from the same HETATM pool but are toggled apart:

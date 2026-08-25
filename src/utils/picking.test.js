@@ -106,6 +106,32 @@ describe('firstAtomHit', () => {
 
     expect(firstAtomHit(hits)).toBe(near);
   });
+
+  // The residue spheres are one instanced mesh, so every hit reports the same object
+  // and only instanceId says which residue was clicked.
+  it('resolves an instanced hit through instanceId', () => {
+    const atoms = [
+      { residue: 'GLY', residueNum: 1, chain: 'A' },
+      { residue: 'ALA', residueNum: 2, chain: 'A' },
+      { residue: 'SER', residueNum: 3, chain: 'A' },
+    ];
+    const mesh = { userData: { atoms } };
+
+    expect(firstAtomHit([{ object: mesh, instanceId: 2 }])).toBe(atoms[2]);
+    expect(firstAtomHit([{ object: mesh, instanceId: 0 }])).toBe(atoms[0]);
+  });
+
+  it('selects nothing when an instanced hit is out of range', () => {
+    const mesh = { userData: { atoms: [{ residue: 'GLY', residueNum: 1, chain: 'A' }] } };
+
+    expect(firstAtomHit([{ object: mesh, instanceId: 5 }])).toBeNull();
+  });
+
+  it('still reads per-mesh atoms, which is how ligand spheres are built', () => {
+    const ligandAtom = { residue: 'HEM', residueNum: 147, chain: 'A' };
+
+    expect(firstAtomHit([{ object: { userData: { atomInfo: ligandAtom } } }])).toBe(ligandAtom);
+  });
 });
 
 describe('formatAtomLabel', () => {

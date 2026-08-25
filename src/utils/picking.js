@@ -68,7 +68,18 @@ export function toNormalizedDeviceCoords(clientX, clientY, rect) {
  */
 export function firstAtomHit(intersections) {
   const nearest = intersections[0];
-  return nearest?.object?.userData?.atomInfo ?? null;
+  if (!nearest) return null;
+
+  // Residue spheres are a single instanced mesh, so every one of them is the same
+  // object and identity comes from which copy the ray met. Three.js reports that as
+  // instanceId, and the mesh carries its atoms in instance order.
+  const atoms = nearest.object?.userData?.atoms;
+  if (atoms && nearest.instanceId !== undefined) {
+    return atoms[nearest.instanceId] ?? null;
+  }
+
+  // Ligand spheres are still one mesh per atom.
+  return nearest.object?.userData?.atomInfo ?? null;
 }
 
 /**

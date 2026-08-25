@@ -209,15 +209,23 @@ function distanceBetween(a, b) {
 }
 
 /**
- * Builds one sphere per backbone atom, colored by the chosen scheme.
+ * Builds the residue spheres as a single instanced mesh, colored by the chosen scheme.
+ *
+ * Every sphere is the same geometry at a different position and color, which is exactly
+ * what InstancedMesh is for: it uploads the sphere once and draws every copy in one
+ * call, where separate meshes cost a draw call each. A ribosome has ~12,000 residues,
+ * and 12,000 draw calls per frame is roughly ten times what a browser will render
+ * smoothly - the structures mmCIF and BinaryCIF exist to open are precisely the ones
+ * that made this hurt.
  *
  * @param {Array<Object>} backboneAtoms - CA atoms from getBackboneAtoms()
  * @param {string} colorScheme - 'residue' or 'chain'
  * @param {Object} options - Extra context passed to computeAtomColors()
- * @returns {Array<THREE.Mesh>}
+ * @returns {THREE.InstancedMesh} One mesh holding every residue sphere
  */
 export function createAtomSpheres(backboneAtoms, colorScheme = 'residue', options = {}) {
-  const spheres = [];
+  // InstancedMesh needs a fixed count up front, and a count of zero is not useful.
+  if (backboneAtoms.length === 0) return new THREE.Group();
 
   // One radius for the whole structure, computed once rather than per atom.
   const radius = getResidueRadius(backboneAtoms);
@@ -226,46 +234,51 @@ export function createAtomSpheres(backboneAtoms, colorScheme = 'residue', option
   const colors = computeAtomColors(backboneAtoms, colorScheme, options);
 
   // 16x16 segments keeps spheres smooth without hurting frame rate on large structures.
-  // Built once and shared: every sphere is the same size, so a copy per residue would
-  // upload the same ~290 vertices thousands of times over. mmCIF opens structures with
-  // tens of thousands of residues, where that is the difference between a load and a
-  // stall.
   const geometry = new THREE.SphereGeometry(radius, 16, 16);
 
-  // Materials are shared per color for the same reason - there are at most a few dozen
-  // distinct colors, against one material per residue before.
-  const materials = new Map();
-  const materialFor = (color) => {
-    let material = materials.get(color);
-    if (!material) {
-      // MeshStandardMaterial takes the scene lighting, and that bright/shaded gradient
-      // is what makes a sphere read as a ball instead of a flat circle.
-      material = new THREE.MeshStandardMaterial({
-        color: color,
-        roughness: 0.35,
-        metalness: 0.05
-      });
-      materials.set(color, material);
-    }
-    return material;
-  };
-
-  backboneAtoms.forEach((atom, index) => {
-    const sphere = new THREE.Mesh(geometry, materialFor(colors[index]));
-    sphere.position.set(atom.x, atom.y, atom.z);
-
-    // Carried along for future picking / hover interactions.
-    sphere.userData = {
-      atomInfo: atom,
-      residue: atom.residue,
-      residueNum: atom.residueNum,
-      chain: atom.chain
-    };
-
-    spheres.push(sphere);
+  // MeshStandardMaterial takes the scene lighting, and that bright/shaded gradient
+  // is what makes a sphere read as a ball instead of a flat circle.
+  //
+  // The base color is left white on purpose: instance colors multiply against it, so
+  // any other value would tint every residue.
+  const material = new THREE.MeshStandardMaterial({
+    roughness: 0.35,
+    metalness: 0.05
   });
 
-  return spheres;
+  const mesh = new THREE.InstancedMesh(geometry, material, backboneAtoms.length);
+
+  // Reused across the loop - setMatrixAt and setColorAt copy the values in, so one
+  // scratch instance of each is enough and avoids thousands of allocations.
+  const matrix = new THREE.Matrix4();
+  const color = new THREE.Color();
+
+  backboneAtoms.forEach((atom, index) => {
+    // The spheres are never rotated or scaled, so the instance matrix is a plain
+    // translation to the atom's coordinates.
+    matrix.setPosition(atom.x, atom.y, atom.z);
+    mesh.setMatrixAt(index, matrix);
+
+    color.setHex(colors[index]);
+    mesh.setColorAt(index, color);
+  });
+
+  // Both buffers are filled after construction, so they have to be flagged for upload
+  // or the mesh renders at the origin in black.
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.instanceColor.needsUpdate = true;
+
+  // Culling uses the bounding volume, which by default covers only the source sphere at
+  // the origin - without this the whole structure vanishes as soon as the origin leaves
+  // the frustum.
+  mesh.computeBoundingSphere();
+
+  // A raycast against an instanced mesh reports which copy was hit as
+  // intersection.instanceId rather than as a distinct object, so the atom records are
+  // kept here in instance order for the picker to index into.
+  mesh.userData = { atoms: backboneAtoms };
+
+  return mesh;
 }
 
 /**
